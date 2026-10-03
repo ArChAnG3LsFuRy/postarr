@@ -1,0 +1,19 @@
+# Keep the build context small and the image clean — everything here is either rebuildable,
+# Windows-only, or irrelevant to the Linux container.
+**/bin/
+**/obj/
+dist/
+.git/
+.vs/
+**/*.user
+scripts/
+deploy/
+src/PostarrTray/
+Postarr-Backups/
+devdata/
+*.md
+!THIRD-PARTY-NOTICES.md
+devrun
+devrun-demo
+config/
+devrun2

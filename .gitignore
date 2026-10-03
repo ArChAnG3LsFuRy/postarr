@@ -1,0 +1,25 @@
+# Build output — bin/ also holds the dev database (with real server tokens) when running from source
+bin/
+obj/
+dist/
+devrun/
+devrun2/
+devrun-demo/
+
+# Local test data, databases, caches and backups
+devdata/
+config/
+*.db
+*.db-shm
+*.db-wal
+Postarr-Backups/
+imagecache/
+kometa-cache/
+
+# Editor / tool settings
+.vs/
+.vscode/
+*.user
+*.suo
+.claude/
+.env

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Postarr</RootNamespace>
+    <AssemblyName>Postarr</AssemblyName>
+    <Version>1.7.0</Version>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Ship self-contained: the Plex server has no .NET runtime installed, so a framework-dependent
+         publish fails to launch ("No frameworks were found"). Only applies when a RID is given
+         (i.e. publish); plain debug builds set no RID and are unaffected. -->
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <!-- Linux native SkiaSharp (libSkiaSharp.so). The base SkiaSharp package only carries win32 +
+         macOS natives, so without this a linux-x64/arm64 publish has no native lib and every poster
+         render throws. RID-specific: this contributes nothing to a Windows publish. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.8" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+</Project>

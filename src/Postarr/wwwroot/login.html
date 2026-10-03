@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Postarr — Sign in</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="stylesheet" href="css/app.css" />
+  <style>
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:16px; box-sizing:border-box; }
+    .login-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 36px 34px;
+      width: 380px; max-width: 100%; box-sizing: border-box;
+    }
+    .login-brand { display:flex; justify-content:center; margin-bottom:24px; }
+    .login-brand img { height:64px; }
+    .login-card h2 { margin:0 0 6px; font-size:17px; color:var(--text-primary); font-weight:600; }
+    .login-intro { margin:0 0 20px; font-size:12.5px; line-height:1.5; color:var(--text-secondary); }
+    .login-field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+    .login-field label { font-size:12.5px; font-weight:600; color:var(--text-secondary); }
+    .login-field input {
+      background: var(--bg-base); border:1px solid var(--border-strong);
+      border-radius:var(--radius-sm); color:var(--text-primary);
+      padding:10px 12px; font-size:13px;
+    }
+    .login-field input:focus { outline:none; border-color:var(--accent); }
+    .login-btn {
+      width:100%; background:var(--accent); color:var(--accent-text);
+      border:none; border-radius:var(--radius-sm);
+      padding:12px; font-size:14px; font-weight:700; cursor:pointer; margin-top:6px;
+    }
+    .login-btn:hover { filter:brightness(1.08); }
+    .login-btn:disabled { opacity:.6; cursor:default; }
+    .login-error { color:var(--danger); font-size:12.5px; margin-top:10px; display:none; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand"><img src="/images/logo/postarr-logo.png" alt="Postarr — Media Artwork Manager" /></div>
+    <h2 id="title">Sign in</h2>
+    <p class="login-intro" id="intro" hidden>Welcome! Create the login that protects Postarr. It holds your media server
+      token and API keys, so anyone who can reach this page shouldn't be able to use it without signing in.</p>
+    <div class="login-field">
+      <label for="username">Username</label>
+      <input type="text" id="username" autocomplete="username" />
+    </div>
+    <div class="login-field">
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password" />
+    </div>
+    <div class="login-field" id="confirm-row" hidden>
+      <label for="confirm">Confirm password</label>
+      <input type="password" id="confirm" autocomplete="new-password" />
+    </div>
+    <button class="login-btn" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+  <script>
+    const $ = id => document.getElementById(id);
+    let setup = false;
+
+    function showError(msg) { const e = $('login-error'); e.textContent = msg; e.style.display = 'block'; }
+
+    (async () => {
+      try {
+        const s = await (await fetch('/api/auth/status')).json();
+        if (s.authenticated && !s.setupRequired) { window.location.href = '/'; return; }
+        setup = !!s.setupRequired;
+      } catch { /* show the sign-in form */ }
+      if (setup) {
+        document.title = 'Postarr — Create your login';
+        $('title').textContent = 'Create your login';
+        $('intro').hidden = false;
+        $('confirm-row').hidden = false;
+        $('password').autocomplete = 'new-password';
+        $('password').placeholder = 'At least 8 characters';
+        $('username').value = 'admin';
+        $('login-btn').textContent = 'Create login';
+      }
+      $(setup ? 'password' : 'username').focus();
+    })();
+
+    async function submit() {
+      const btn = $('login-btn');
+      $('login-error').style.display = 'none';
+      const username = $('username').value.trim(), password = $('password').value;
+      if (setup) {
+        if (!username) return showError('Choose a username.');
+        if (password.length < 8) return showError('Use a password of at least 8 characters.');
+        if (password !== $('confirm').value) return showError("The passwords don't match.");
+      }
+      btn.disabled = true; btn.textContent = setup ? 'Creating…' : 'Signing in…';
+      try {
+        const resp = await fetch(setup ? '/api/auth/setup' : '/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        if (resp.ok) { window.location.href = '/'; return; }
+        let msg = setup ? 'Could not create the login.' : 'Invalid username or password.';
+        try { const j = await resp.json(); if (j.error) msg = j.error; } catch { }
+        showError(msg);
+      } catch { showError('Network error. Is Postarr running?'); }
+      btn.disabled = false; btn.textContent = setup ? 'Create login' : 'Sign in';
+    }
+    $('login-btn').addEventListener('click', submit);
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Postarr — Plex artwork manager. `docker compose up -d` then open http://<host>:5286
+services:
+  postarr:
+    build: .
+    image: postarr:latest
+    container_name: postarr
+    ports:
+      - "5286:5286"
+    volumes:
+      # Database, image cache and poster backups persist here on the host.
+      - ./config:/config
+    environment:
+      # Uncomment to change the listen port (also update the ports mapping above).
+      # - ASPNETCORE_URLS=http://0.0.0.0:5286
+      TZ: Etc/UTC
+      # Postarr runs as this user/group inside the container and owns ./config. Set them to your own
+      # (run `id` on the host) if you want to edit the files there; default 1654 is the image's "app" user.
+      PUID: "1654"
+      PGID: "1654"
+    restart: unless-stopped

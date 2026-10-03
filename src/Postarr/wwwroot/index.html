@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Postarr</title>
+  <link rel="icon" href="/favicon.ico?v=1.0.34" sizes="any" />
+  <link rel="stylesheet" href="css/app.css?v=1.0.74" />
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="/images/logo/postarr-logo.png?v=1.0.44" alt="Postarr — Media Artwork Manager" class="brand-logo" />
+    </div>
+
+    <nav class="nav">
+      <div class="nav-group-label">Movies</div>
+      <button class="nav-item active" data-view="movies">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4h16v16H4z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M4 9h16M9 4v5" stroke="currentColor" stroke-width="1.6"/></svg>
+        Movie Posters
+      </button>
+      <button class="nav-item" data-view="movie-backgrounds">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><path d="M2 16l5-4 4 3 4-5 7 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+        Movie Backgrounds
+      </button>
+      <button class="nav-item" data-view="movie-collections">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="2" y="7" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M6 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+        Movie Collections
+      </button>
+
+      <div class="nav-group-label" style="margin-top:10px">TV Shows</div>
+      <button class="nav-item" data-view="shows">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="12" rx="1.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M9 21h6M12 17v4" stroke="currentColor" stroke-width="1.6"/></svg>
+        Show Posters
+      </button>
+      <button class="nav-item" data-view="show-backgrounds">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/><path d="M2 16l5-4 4 3 4-5 7 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+        Show Backgrounds
+      </button>
+      <button class="nav-item" data-view="show-collections">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="2" y="7" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M6 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+        Show Collections
+      </button>
+
+      <div class="nav-group-label" style="margin-top:10px">System</div>
+      <button class="nav-item" data-view="auto-collections">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M17.5 14v7M14 17.5h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Auto Collections
+      </button>
+      <button class="nav-item" data-view="health">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 21s-7-4.35-9.5-8.5C1 9.5 2.5 6 6 6c2 0 3.2 1.2 4 2.5C10.8 7.2 12 6 14 6c3.5 0 5 3.5 3.5 6.5C19 16.65 12 21 12 21z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>
+        Health
+        <span class="nav-badge" id="health-badge" hidden></span>
+      </button>
+      <button class="nav-item" data-view="activity">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 12h4l3 8 4-16 3 8h4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Activity
+        <span class="live-dot" id="live-dot" hidden></span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Settings
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button id="apply-all-btn" class="btn-apply-all">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Apply All
+      </button>
+      <button id="scan-btn" class="btn-scan">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4v6h6M20 20v-6h-6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 14a8 8 0 0 0 14.5 3M19 10A8 8 0 0 0 4.5 7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        Scan Library
+      </button>
+      <div class="scan-progress-wrap" id="scan-progress-wrap" hidden>
+        <div class="scan-progress-bar"><div class="scan-progress-fill" id="scan-progress-fill"></div></div>
+        <div class="scan-progress-text" id="scan-progress-text">Scanning…</div>
+        <button id="cancel-scan-btn" class="btn-cancel-scan">✕ Cancel Scan</button>
+      </div>
+      <div class="scan-status" id="scan-status">Idle</div>
+      <button id="logout-btn" class="btn-logout" hidden>Sign out</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="topbar">
+      <button id="nav-toggle" class="nav-toggle" aria-label="Open menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <h1 id="view-title">Movies</h1>
+      <div class="topbar-actions">
+        <div class="size-control" id="size-control" title="Poster size">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none"><rect x="4" y="4" width="6" height="8" rx="1" stroke="currentColor" stroke-width="1.6"/></svg>
+          <input type="range" id="size-slider" min="90" max="300" step="10" value="180" aria-label="Poster size" />
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none"><rect x="4" y="3" width="10" height="14" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+        </div>
+        <select id="filter-box" class="filter-box" title="Filter the grid"></select>
+        <button id="select-mode-btn" class="select-mode-btn" title="Select multiple">Select</button>
+        <input type="search" id="search-box" placeholder="Filter by title…" />
+      </div>
+    </header>
+
+    <section id="view-movies"              class="view poster-grid"></section>
+    <section id="view-movie-backgrounds"   class="view bg-grid"     hidden></section>
+    <section id="view-movie-collections"   class="view poster-grid" hidden></section>
+    <section id="view-shows"               class="view poster-grid" hidden></section>
+    <section id="view-show-backgrounds"    class="view bg-grid"     hidden></section>
+    <section id="view-show-collections"    class="view poster-grid" hidden></section>
+    <section id="view-auto-collections"    class="view"             hidden></section>
+    <section id="view-health"              class="view"             hidden></section>
+    <section id="view-activity"            class="view"             hidden></section>
+    <section id="view-settings"            class="view"             hidden></section>
+  </main>
+
+  <!-- Vertical A–Z jump index (click a letter to scroll the grid to it) -->
+  <nav id="az-bar" class="az-bar" aria-label="Jump to letter" hidden></nav>
+
+  <!-- Tap-to-close backdrop for the mobile nav drawer (hidden on desktop) -->
+  <div id="nav-scrim" class="nav-scrim" hidden></div>
+
+  <!-- Floating bulk-action bar, shown while multi-select is active -->
+  <div id="selection-bar" class="selection-bar" hidden>
+    <span id="selection-count">0 selected</span>
+    <button id="sel-apply"   class="sel-btn sel-apply">✓ Apply</button>
+    <button id="sel-dismiss" class="sel-btn sel-dismiss">✕ Dismiss</button>
+    <button id="sel-clear"   class="sel-btn">Clear</button>
+  </div>
+</div>
+
+<!-- Art picker modal -->
+<div id="art-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <header class="modal-header">
+      <div>
+        <h2 id="modal-title">Choose artwork</h2>
+        <div class="modal-subtitle" id="modal-subtitle"></div>
+      </div>
+      <button class="modal-close" id="modal-close">&times;</button>
+    </header>
+    <!-- Back button shown when drilling into season picker -->
+    <button class="modal-back-btn" id="modal-back-btn" hidden>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Back to show
+    </button>
+    <div class="modal-tabs" id="modal-tabs"></div>
+    <div class="modal-toolbar" id="modal-toolbar">
+      <label class="textless-toggle">
+        <input type="checkbox" id="modal-textless-only" /> Textless only
+      </label>
+      <label class="textless-toggle match-set-toggle" id="match-set-toggle" hidden
+             title="FanArt.tv posters only: also apply the posters from the same set (same language, uploaded together) to the show's other seasons">
+        <input type="checkbox" id="modal-match-set" /> Match the other seasons (same FanArt.tv set)
+      </label>
+      <div class="modal-actions-right" id="modal-actions-right"></div>
+    </div>
+    <!-- Show detail view (poster + seasons) -->
+    <div class="show-detail" id="show-detail" hidden></div>
+    <!-- Candidate picker grid -->
+    <div class="modal-grid" id="modal-grid" hidden></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+<script src="js/app.js?v=1.0.74"></script>
+</body>
+</html>
