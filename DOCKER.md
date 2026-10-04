@@ -88,7 +88,7 @@ Copy your Windows data folder contents into the mounted `/config` volume before 
 - From `C:\ProgramData\Postarr\` (service install) — `postarr.db`, `imagecache\`, `Backups\`.
 
 Postarr opens the existing `postarr.db` in place, so your whole library, settings and API keys carry
-over. (The legacy `curatarr.db` name is auto-migrated too.)
+over.
 
 ## Notes
 
