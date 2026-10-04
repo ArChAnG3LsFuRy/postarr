@@ -129,6 +129,18 @@ deploy/             Inno Setup installer script
 - Emby can't keep a custom collection order (it sorts collections by release date or name); Plex and Jellyfin can.
 - ThePosterDB has no public API, so it isn't a poster source.
 
+## Code signing policy
+
+Windows releases are built from this repository by GitHub Actions and code-signed through the
+[SignPath Foundation](https://signpath.org) (free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by SignPath Foundation) — signing is being set up, so early releases may still be unsigned.
+
+- Committers and approvers: [Mathew Kerr](https://github.com/ArChAnG3LsFuRy) (sole maintainer). Every release is built
+  from a version tag on this repository; nothing built elsewhere is signed.
+- Privacy: Postarr sends no telemetry and collects no data. It only talks to the media server you configure and to the
+  artwork / metadata services you add keys for (TMDB, FanArt.tv, TheTVDB, OMDb, MDBList, Trakt), and it downloads
+  Kometa's default collection posters from GitHub if you opt in.
+
 ## Support
 
 Postarr is free. If it saves you some time, there's a **Buy me a coffee** link in Settings → Support Postarr. Thank you!
