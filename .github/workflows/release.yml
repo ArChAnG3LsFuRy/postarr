@@ -1,7 +1,7 @@
 # Builds the Windows installer and publishes it as a GitHub release.
 #
 # Runs when a version tag is pushed (git tag v1.7.0 && git push origin v1.7.0), or by hand from the Actions tab.
-# Code signing goes through SignPath (free for open-source projects via the SignPath Foundation). Until the
+# Code signing goes through SignPath (the free SignPath Foundation programme declined us in Oct 2026 — reapply later). Until the
 # SIGNPATH_API_TOKEN secret exists, the signing steps are skipped and the release is unsigned — see RELEASING.md.
 name: Windows release
 
@@ -138,5 +138,4 @@ jobs:
           body: |
             **Windows:** download `Postarr-Setup-${{ steps.ver.outputs.version }}.exe` below and run it.
             **Docker:** `docker pull ghcr.io/${{ steps.ver.outputs.owner }}/postarr:${{ steps.ver.outputs.version }}` — see DOCKER.md.
-            Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
             ${{ steps.pick.outputs.signed != 'True' && '> This build is not code-signed yet: Windows may say it "protected your PC" — choose **More info → Run anyway**.' || '' }}
