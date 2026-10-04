@@ -39,6 +39,7 @@ jobs:
         run: |
           $v = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}".TrimStart('v') }
           "version=$v" >> $env:GITHUB_OUTPUT
+          "owner=${{ github.repository_owner }}".ToLower() >> $env:GITHUB_OUTPUT   # image names must be lowercase
 
       # ── Build (self-contained: the PC needs no .NET runtime) ─────────────────────────────────────────────
       - name: Publish Postarr
@@ -136,6 +137,6 @@ jobs:
           generate_release_notes: true
           body: |
             **Windows:** download `Postarr-Setup-${{ steps.ver.outputs.version }}.exe` below and run it.
-            **Docker:** `docker pull ghcr.io/${{ github.repository_owner }}/postarr:${{ steps.ver.outputs.version }}` — see DOCKER.md.
+            **Docker:** `docker pull ghcr.io/${{ steps.ver.outputs.owner }}/postarr:${{ steps.ver.outputs.version }}` — see DOCKER.md.
             Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
             ${{ steps.pick.outputs.signed != 'True' && '> This build is not code-signed yet: Windows may say it "protected your PC" — choose **More info → Run anyway**.' || '' }}
