@@ -18,6 +18,8 @@ but everything is done from a web page instead of YAML.
 It runs on **Windows** (installer with a background service and tray icon) and on **Linux / NAS / Raspberry Pi** (Docker,
 amd64 and arm64).
 
+https://github.com/user-attachments/assets/53fcd6f8-b81a-4513-939a-ba5213efef77
+
 ## Features
 
 **Posters and backgrounds**
