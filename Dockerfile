@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ----- build stage -----
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# The build stage always runs on the build machine's own architecture: the publish is framework-dependent and
+# portable (it carries the SQLite/SkiaSharp native libraries for x64, arm64 and arm), so its output is the same
+# for every target. Only the runtime stage below is per-architecture — fast multi-arch builds, no emulated SDK.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Restore first (cached unless the csproj changes)

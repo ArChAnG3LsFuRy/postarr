@@ -1,0 +1,140 @@
+# Builds the Windows installer and publishes it as a GitHub release.
+#
+# Runs when a version tag is pushed (git tag v1.7.0 && git push origin v1.7.0), or by hand from the Actions tab.
+# Code signing goes through SignPath (free for open-source projects via the SignPath Foundation). Until the
+# SIGNPATH_API_TOKEN secret exists, the signing steps are skipped and the release is unsigned — see RELEASING.md.
+name: Windows release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number for a manual build (e.g. 1.7.0)"
+        required: true
+
+permissions:
+  contents: write   # create the GitHub release
+
+env:
+  SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+  SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+  SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'postarr' }}
+  SIGNPATH_POLICY_SLUG: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}".TrimStart('v') }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      # ── Build (self-contained: the PC needs no .NET runtime) ─────────────────────────────────────────────
+      - name: Publish Postarr
+        run: dotnet publish src/Postarr/Postarr.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -o dist/Postarr
+
+      - name: Publish tray app
+        run: dotnet publish src/PostarrTray/PostarrTray.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:Version=${{ steps.ver.outputs.version }} -o dist/Tray
+
+      # ── Sign the programs themselves (Postarr.exe, Postarr.dll, PostarrTray.exe) ─────────────────────────
+      - name: Upload programs for signing
+        id: upload-programs
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: programs-unsigned
+          path: |
+            dist/Postarr/Postarr.exe
+            dist/Postarr/Postarr.dll
+            dist/Tray/PostarrTray.exe
+
+      - name: Sign programs (SignPath)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: programs
+          github-artifact-id: ${{ steps.upload-programs.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-programs
+
+      - name: Put the signed programs back
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          Get-ChildItem signed-programs -Recurse -File | ForEach-Object {
+            $dest = if ($_.Name -eq 'PostarrTray.exe') { 'dist/Tray' } else { 'dist/Postarr' }
+            Copy-Item $_.FullName (Join-Path $dest $_.Name) -Force
+          }
+
+      # ── Installer ────────────────────────────────────────────────────────────────────────────────────────
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" "/DSourceRoot=${{ github.workspace }}" "deploy\Postarr.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload installer for signing
+        id: upload-installer
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-unsigned
+          path: dist/Postarr-Setup-${{ steps.ver.outputs.version }}.exe
+
+      - name: Sign installer (SignPath)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+
+      - name: Pick the installer to publish
+        id: pick
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem signed-installer -Filter *.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          $file = if ($signed) { $signed.FullName } else { "dist/Postarr-Setup-${{ steps.ver.outputs.version }}.exe" }
+          "file=$file" >> $env:GITHUB_OUTPUT
+          "signed=$([bool]$signed)" >> $env:GITHUB_OUTPUT
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Postarr-Setup-${{ steps.ver.outputs.version }}
+          path: ${{ steps.pick.outputs.file }}
+
+      # ── GitHub release (tag builds only) ─────────────────────────────────────────────────────────────────
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pick.outputs.file }}
+          generate_release_notes: true
+          body: |
+            **Windows:** download `Postarr-Setup-${{ steps.ver.outputs.version }}.exe` below and run it.
+            **Docker:** `docker pull ghcr.io/${{ github.repository_owner }}/postarr:${{ steps.ver.outputs.version }}` — see DOCKER.md.
+            ${{ steps.pick.outputs.signed != 'True' && '> This build is not code-signed yet: Windows may say it "protected your PC" — choose **More info → Run anyway**.' || '' }}

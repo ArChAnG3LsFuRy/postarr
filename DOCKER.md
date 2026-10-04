@@ -4,7 +4,18 @@ Postarr is a cross-platform ASP.NET Core app, so it runs anywhere .NET 8 runs. T
 adds a service + tray icon; on Linux the simplest path is the container below. The web UI, scanning,
 poster generation and Plex integration are all identical to the Windows build.
 
-## Quick start (Docker Compose)
+## Quick start (pre-built image)
+
+Images for PCs/servers (amd64) and ARM (arm64) are published to GitHub Container Registry with each release:
+
+```bash
+docker run -d --name postarr   -p 5286:5286   -v /path/on/host/postarr-config:/config   -e PUID=1000 -e PGID=1000   --restart unless-stopped   ghcr.io/<github-user>/postarr:latest
+```
+
+Then open **http://<host-ip>:5286**. The first visit asks you to **create a login** — Postarr stays locked until
+you do, because it stores your media server token and API keys.
+
+## Quick start (Docker Compose, building from source)
 
 ```bash
 docker compose up -d --build
@@ -25,6 +36,13 @@ docker run -d --name postarr \
   --restart unless-stopped \
   postarr
 ```
+
+## User and permissions (PUID / PGID)
+
+Postarr never runs as root inside the container. On start it makes `/config` belong to the user given by
+`PUID`/`PGID` and then runs as that user. The default (1654) is the .NET image's built-in `app` user; set them
+to your own IDs (run `id` on the host) if you want to open the files in `/config` yourself. If you start the
+container with Docker's `--user` option instead, that user must already be able to write to `/config`.
 
 ## Persistence
 
@@ -51,7 +69,8 @@ docker run -d --name postarr -p 8080:8080 \
 
 ## ARM (Synology / QNAP / Raspberry Pi)
 
-The `mcr.microsoft.com/dotnet` base images and the SkiaSharp Linux native assets are multi-arch
+The published image includes arm64 (tested: the database and poster/badge drawing work on arm64). The
+`mcr.microsoft.com/dotnet` base images and the SkiaSharp Linux native assets are multi-arch
 (x64, arm64 and 32-bit arm are all bundled), so the same Dockerfile builds for ARM. On an ARM host
 `docker build` just works; to build an arm64 image from an x86 machine use buildx:
 
@@ -75,5 +94,7 @@ over. (The legacy `curatarr.db` name is auto-migrated too.)
 
 - The Windows system-tray helper (`PostarrTray`) is Windows-only and intentionally not part of the
   container — a container has no tray. Manage the container with `docker` instead.
-- Talking to Plex is over its HTTP API, so Postarr does **not** need access to your media files —
-  only network access to your Plex server and the internet (TMDB / FanArt / TVDB).
+- Postarr talks to Plex, Jellyfin or Emby over their HTTP APIs, so it does **not** need access to your media
+  files — only network access to your media server and the internet (TMDB / FanArt.tv / TheTVDB).
+- If your media server runs on the same machine as Docker Desktop, use `http://host.docker.internal:<port>` as its
+  address in Settings (inside a container, `localhost` means the container itself).

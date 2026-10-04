@@ -6,7 +6,14 @@
 ; the legacy Curatarr service, shortcuts, firewall rule and leftover binaries on upgrade.
 
 #define AppName    "Postarr"
-#define AppVersion "1.7.0"
+; Both can be overridden on the command line, which is how the GitHub release build uses this script:
+;   ISCC /DAppVersion=1.8.0 /DSourceRoot=<checkout folder> deploy\Postarr.iss
+#ifndef AppVersion
+  #define AppVersion "1.7.0"
+#endif
+#ifndef SourceRoot
+  #define SourceRoot "C:\CuratarrC"
+#endif
 #define AppExe     "Postarr.exe"
 #define TrayExe    "PostarrTray.exe"
 #define AppPort    "5286"
@@ -14,7 +21,7 @@
 #define LegacySvc  "Curatarr"
 
 [Setup]
-SourceDir=C:\CuratarrC
+SourceDir={#SourceRoot}
 AppId={{A82FBEB9-2EB0-4BFC-9510-C4648A39CAE9}
 AppName={#AppName}
 AppVersion={#AppVersion}
