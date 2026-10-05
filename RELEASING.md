@@ -7,6 +7,9 @@ git tag v1.7.0
 git push origin v1.7.0
 ```
 
+To explain what changed, add `release-notes/<version>.md` (for example `release-notes/1.8.0.md`) before tagging;
+the Windows workflow puts it at the top of the GitHub release.
+
 That runs two workflows:
 
 | Workflow | What it produces |

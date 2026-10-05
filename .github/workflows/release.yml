@@ -129,13 +129,25 @@ jobs:
           path: ${{ steps.pick.outputs.file }}
 
       # ── GitHub release (tag builds only) ─────────────────────────────────────────────────────────────────
+      # release-notes/<version>.md (if present) explains the changes; the install lines are added below it.
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $notes = "release-notes/$v.md"
+          $body = if (Test-Path $notes) { (Get-Content $notes -Raw -Encoding utf8).TrimEnd() + "`n`n" } else { "" }
+          $body += "**Windows:** download ``Postarr-Setup-$v.exe`` below and run it.`n"
+          $body += "**Docker:** ``docker pull ghcr.io/${{ steps.ver.outputs.owner }}/postarr:$v`` — see DOCKER.md.`n"
+          if ("${{ steps.pick.outputs.signed }}" -ne "True") {
+            $body += "`n> This build is not code-signed yet: Windows may say it ""protected your PC"" — choose **More info → Run anyway**.`n"
+          }
+          Set-Content -Path release-body.md -Value $body -Encoding utf8
+
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.pick.outputs.file }}
           generate_release_notes: true
-          body: |
-            **Windows:** download `Postarr-Setup-${{ steps.ver.outputs.version }}.exe` below and run it.
-            **Docker:** `docker pull ghcr.io/${{ steps.ver.outputs.owner }}/postarr:${{ steps.ver.outputs.version }}` — see DOCKER.md.
-            ${{ steps.pick.outputs.signed != 'True' && '> This build is not code-signed yet: Windows may say it "protected your PC" — choose **More info → Run anyway**.' || '' }}
+          body_path: release-body.md

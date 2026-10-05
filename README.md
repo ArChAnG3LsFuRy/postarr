@@ -73,6 +73,9 @@ https://github.com/user-attachments/assets/53fcd6f8-b81a-4513-939a-ba5213efef77
 
 > Until the installer is code-signed, Windows may say it "protected your PC". Choose **More info → Run anyway**.
 
+> Can't reach it from another device? The installer lets in devices on your local network only. If yours is on a
+> different subnet (another VLAN, or a VPN), add a Windows Firewall rule for TCP port 5286 yourself.
+
 ### Docker (Linux, NAS, Raspberry Pi)
 
 ```bash

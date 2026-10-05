@@ -9,7 +9,7 @@
 ; Both can be overridden on the command line, which is how the GitHub release build uses this script:
 ;   ISCC /DAppVersion=1.8.0 /DSourceRoot=<checkout folder> deploy\Postarr.iss
 #ifndef AppVersion
-  #define AppVersion "1.7.0"
+  #define AppVersion "1.7.1"
 #endif
 #ifndef SourceRoot
   #define SourceRoot "C:\CuratarrC"
@@ -124,9 +124,11 @@ begin
   // ...and our own earlier rule, which allowed every network profile.
   Exec(ExpandConstant('{sys}\netsh.exe'),
     'advfirewall firewall delete rule name="Postarr"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  // Private/domain networks only: on a "Public" network (cafe Wi-Fi, a laptop on the road) the port stays closed.
+  // Every network profile, but only from the local subnet: Windows labels many home networks "Public",
+  // so the private/domain-only rule in 1.7.0 blocked other PCs on the LAN. LocalSubnet still keeps the
+  // port closed to anything beyond the network the PC is on, and Postarr's login protects it from there.
   Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall add rule name="Postarr" dir=in action=allow protocol=TCP profile=private,domain localport=' + Port,
+    'advfirewall firewall add rule name="Postarr" dir=in action=allow protocol=TCP profile=any remoteip=localsubnet localport=' + Port,
     '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
