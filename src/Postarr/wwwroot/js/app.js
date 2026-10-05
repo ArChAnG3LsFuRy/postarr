@@ -1987,6 +1987,26 @@ async function renderHealth() {
     </details>`;
   }).join('');
 
+  // Libraries the media server no longer has (e.g. a temporary library from a recovery). Scans never prune
+  // these on their own, so they'd linger as duplicates; the user removes them here.
+  const stale = (h.staleLibraries || []).map(l => {
+    const when = l.newestAddedUtc ? ` · newest added ${localTime(l.newestAddedUtc)}` : '';
+    const cols = l.collections ? ` and ${l.collections} collection${l.collections === 1 ? '' : 's'}` : '';
+    return `<div class="hst-lib">
+      <div class="hst-head"><b>Library ${esc(l.sectionId)}</b> — ${l.items} item${l.items === 1 ? '' : 's'}${cols}${when}</div>
+      <div class="hst-titles">${esc(l.sampleTitles.join(', '))}${l.items > l.sampleTitles.length ? '…' : ''}</div>
+      <button class="btn-restore" data-stale-remove="${esc(l.sectionId)}" data-stale-count="${l.items}">Remove from Postarr</button>
+    </div>`;
+  }).join('');
+  const staleCard = stale ? `
+      <div class="hst-card">
+        <div class="hst-title">Libraries no longer in ${esc(srvName())}</div>
+        <div class="hi-desc">Postarr still has items from these libraries, but ${esc(srvName())} doesn’t list them any more — so they
+          show up as duplicates or blank cards. Scans keep them in case the library comes back (a restore, a server that’s
+          still starting). If it’s really gone, remove it here. Only Postarr’s records are removed; nothing on ${esc(srvName())} changes.</div>
+        ${stale}
+      </div>` : '';
+
   c.innerHTML = `
     <div class="health-wrap">
       <div class="health-card">
@@ -1996,6 +2016,7 @@ async function renderHealth() {
       </div>
       <div class="health-card">
         <h3>Library — ${h.counts.movies} movies · ${h.counts.shows} shows · ${h.counts.collections} collections</h3>
+        ${staleCard}
         <div class="hi-groups">${groups}</div>
       </div>
     </div>`;
@@ -2556,6 +2577,27 @@ function updateHealthBadge(h) {
   b.textContent = n > 999 ? '999+' : String(n);
   b.hidden = n === 0;
 }
+
+// Health → "Libraries no longer in <server>" → Remove.
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-stale-remove]');
+  if (!b) return;
+  const id = b.dataset.staleRemove, n = b.dataset.staleCount;
+  if (!confirm(`Remove library ${id} from Postarr?
+
+Its ${n} item(s), their chosen posters and stored original-poster backups are removed from Postarr. ` +
+               `Nothing changes on ${srvName()}, and items in your current libraries are not touched.`)) return;
+  b.disabled = true; b.textContent = 'Removing…';
+  try {
+    const r = await api(`/health/stale-libraries/${encodeURIComponent(id)}/remove`, { method: 'POST' });
+    toast(`Removed ${r.items} item(s)${r.collections ? ` and ${r.collections} collection(s)` : ''} from library ${id}.`);
+    S.movies = []; S.shows = [];   // grids reload without the removed items
+    renderHealth();
+  } catch (err) {
+    toast(err.message, true);
+    b.disabled = false; b.textContent = 'Remove from Postarr';
+  }
+});
 
 // Jump from a Health list item straight to its grid, filtered so it's easy to find.
 document.addEventListener('click', e => {

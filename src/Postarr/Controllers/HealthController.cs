@@ -105,9 +105,13 @@ public class HealthController : ControllerBase
         var noRatings  = Group(active.Where(i =>
             i.ImdbRating == null && i.RottenTomatoesScore == null && i.AudienceScore == null));
 
+        // Libraries Postarr still has items for but the server no longer lists (live lookup, so full view only).
+        var staleLibraries = quick ? null : await _scan.GetStaleLibrariesAsync();
+
         return Ok(new
         {
             services,
+            staleLibraries = staleLibraries ?? new List<LibraryScanService.StaleLibrary>(),
             scan = new
             {
                 isScanning     = _scan.IsScanning,
@@ -121,5 +125,17 @@ public class HealthController : ControllerBase
             },
             issues = new { noPoster, notApplied, noId, noRatings },
         });
+    }
+
+    /// <summary>Forget a library the media server no longer has (Health page → Remove). Postarr's records only;
+    /// nothing on the server changes. Refused if the library is listed again or a scan is running.</summary>
+    [HttpPost("stale-libraries/{sectionId}/remove")]
+    public async Task<IActionResult> RemoveStaleLibrary(string sectionId)
+    {
+        if (_scan.IsScanning) return Conflict(new { error = "A scan is running — try again when it has finished." });
+        var r = await _scan.RemoveStaleLibraryAsync(sectionId);
+        if (r == null)
+            return BadRequest(new { error = $"Library {sectionId} is still on {_clients.MediaServerName}, or it couldn't be checked right now — nothing was removed." });
+        return Ok(new { items = r.Value.Items, collections = r.Value.Collections });
     }
 }

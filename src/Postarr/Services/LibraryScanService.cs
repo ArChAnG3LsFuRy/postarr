@@ -47,6 +47,79 @@ public class LibraryScanService
 
     public bool IsScanning => _isScanning;
 
+    // ── Libraries that no longer exist on the media server ──────────────────────────────────────────
+    // A scan only prunes items inside libraries the server still lists, so an outage or a library that is
+    // deleted and later restored (Plex rebuilt from a backup) can never wipe Postarr's records. The flip
+    // side: items from a library that is really gone (e.g. a temporary library created during a recovery)
+    // are never pruned. These are detected here and removed only when the user confirms (Health page).
+
+    public record StaleLibrary(string SectionId, int Items, int Collections, List<string> SampleTitles, DateTime? NewestAddedUtc);
+
+    /// <summary>Libraries Postarr has items for that the server no longer lists; null when the server can't be
+    /// asked reliably (not configured, unreachable, or it listed no libraries at all).</summary>
+    public async Task<List<StaleLibrary>?> GetStaleLibrariesAsync(CancellationToken ct = default)
+    {
+        var current = await CurrentSectionKeysAsync(ct);
+        if (current == null) return null;
+
+        var server = _clientFactory.MediaServerName;
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var items = await db.LibraryItems.AsNoTracking()
+            .Where(i => i.ServerType == server && i.PlexLibrarySectionId != "")
+            .Select(i => new { i.PlexLibrarySectionId, i.Title, i.AddedAtUtc })
+            .ToListAsync(ct);
+        var cols = await db.Collections.AsNoTracking()
+            .Where(c => c.ServerType == server && c.PlexLibrarySectionId != "")
+            .Select(c => c.PlexLibrarySectionId)
+            .ToListAsync(ct);
+
+        return items.Where(i => !current.Contains(i.PlexLibrarySectionId))
+            .GroupBy(i => i.PlexLibrarySectionId)
+            .Select(g => new StaleLibrary(g.Key, g.Count(), cols.Count(c => c == g.Key),
+                g.OrderBy(i => i.Title).Select(i => i.Title).Take(8).ToList(),
+                g.Max(i => i.AddedAtUtc)))
+            .OrderBy(s => s.SectionId)
+            .ToList();
+    }
+
+    /// <summary>Removes Postarr's records (items, their seasons, collections and stored original-poster backups) for
+    /// a library the server no longer lists. Re-checked against a live listing, so a library that has come back
+    /// is never touched. Nothing is changed on the media server itself.</summary>
+    public async Task<(int Items, int Collections)?> RemoveStaleLibraryAsync(string sectionId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(sectionId) || _isScanning) return null;
+        var current = await CurrentSectionKeysAsync(ct);
+        if (current == null || current.Contains(sectionId)) return null;
+
+        var server = _clientFactory.MediaServerName;
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var items = await db.LibraryItems.Where(i => i.ServerType == server && i.PlexLibrarySectionId == sectionId).ToListAsync(ct);
+        var cols  = await db.Collections.Where(c => c.ServerType == server && c.PlexLibrarySectionId == sectionId).ToListAsync(ct);
+        if (items.Count == 0 && cols.Count == 0) return (0, 0);
+
+        db.LibraryItems.RemoveRange(items);   // seasons cascade-delete with their show
+        db.Collections.RemoveRange(cols);
+        await db.SaveChangesAsync(ct);
+        foreach (var i in items) _backup.DeleteItemBackup(i.PlexRatingKey);
+
+        await _log.LogAsync($"Removed {items.Count} item(s) and {cols.Count} collection(s) from library {sectionId}, which no longer exists in " +
+                            $"{server}: {string.Join(", ", items.Take(20).Select(i => i.Title))}");
+        return (items.Count, cols.Count);
+    }
+
+    private async Task<HashSet<string>?> CurrentSectionKeysAsync(CancellationToken ct)
+    {
+        var client = _clientFactory.BuildMediaServerClient();
+        if (client == null) return null;
+        try
+        {
+            var sections = await client.GetLibrarySectionsAsync(ct);
+            // An empty listing is far more likely a server still starting up than every library deleted.
+            return sections.Count == 0 ? null : sections.Select(s => s.Key).ToHashSet();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+    }
+
     public void CancelScan()
     {
         _scanCts?.Cancel();
@@ -151,6 +224,16 @@ public class LibraryScanService
             {
                 await _log.LogAsync($"Prune step failed (non-fatal): {ex.Message}", "Error");
             }
+
+            // Items from libraries the server no longer has are kept (see GetStaleLibrariesAsync) — say so.
+            try
+            {
+                var stale = await GetStaleLibrariesAsync(ct);
+                if (stale is { Count: > 0 })
+                    await _log.LogAsync($"{stale.Sum(s => s.Items)} item(s) belong to {stale.Count} librar{(stale.Count == 1 ? "y" : "ies")} " +
+                                        $"no longer in {_clientFactory.MediaServerName} — kept for now; remove them from the Health page.", "Warning");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* informational only */ }
 
             // Scan collections
             foreach (var sec in sections)

@@ -770,6 +770,11 @@ body.select-mode .bg-card .card-actions { pointer-events:none; opacity:0; }  /* 
 .hi-year { color:var(--text-tertiary); }
 .hi-none { font-size:12px; color:var(--success); }
 .hi-more { width:100%; font-size:11.5px; color:var(--text-tertiary); padding-top:2px; }
+.hst-card { border:1px solid var(--warning); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:12px; background:var(--bg-panel-raised); }
+.hst-title { font-size:13.5px; font-weight:700; color:var(--warning); padding-bottom:6px; }
+.hst-lib { border-top:1px solid var(--border-subtle); padding:10px 0 4px; }
+.hst-head { font-size:13px; color:var(--text-primary); }
+.hst-titles { font-size:12px; color:var(--text-tertiary); padding:4px 0 8px; }
 @media (max-width: 760px) { .health-wrap { grid-template-columns:1fr; } }
 
 /* ── Appearance / theme picker ──────────────────────────────────────────────── */
