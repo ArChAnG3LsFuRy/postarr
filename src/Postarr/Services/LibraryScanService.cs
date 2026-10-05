@@ -175,12 +175,22 @@ public class LibraryScanService
 
             int processed = 0, newCount = 0, updatedCount = 0, skippedCount = 0, errors = 0;
 
+            // For recognising re-added titles: a record's key is gone when its library isn't listed any more, or
+            // the library was listed with items and the key wasn't among them. A library that came back empty is
+            // treated as unknown (more likely a hiccup than every item re-added), so nothing in it is "gone".
+            var listedKeys     = allItems.Select(x => x.Item.RatingKey).ToHashSet();
+            var listedSections = sections.Select(x => x.Key).ToHashSet();
+            var filledSections = allItems.Select(x => x.Sec.Key).ToHashSet();
+            Func<LibraryItem, Task<bool>>? isGone = allItems.Count == 0 ? null : r => Task.FromResult(
+                !listedSections.Contains(r.PlexLibrarySectionId)
+                || (filledSections.Contains(r.PlexLibrarySectionId) && !listedKeys.Contains(r.PlexRatingKey)));
+
             foreach (var (sec, plexItem) in allItems)
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var (isNew, isChanged, skipped) = await UpsertItemAsync(sec, plexItem, incrementalMode, ct);
+                    var (isNew, isChanged, skipped) = await UpsertItemAsync(sec, plexItem, incrementalMode, ct, isGone);
                     if (isNew) newCount++;
                     else if (isChanged) updatedCount++;
                     else if (skipped) skippedCount++;
@@ -285,19 +295,41 @@ public class LibraryScanService
         var plex = _clientFactory.BuildMediaServerClient();
         if (plex == null) return;
         var sections = await plex.GetLibrarySectionsAsync(ct);
+        var listings = new Dictionary<string, HashSet<string>>();
         foreach (var sec in sections)
         {
             if (isShow != (sec.Type == "show")) continue;
             var items = await plex.GetSectionItemsAsync(sec, ct);
+            if (items.Count > 0) listings[sec.Key] = items.Select(i => i.RatingKey).ToHashSet();
             var match = items.FirstOrDefault(i => i.RatingKey == ratingKey);
             if (match != null)
             {
                 await AddItemDetailsAsync(plex, new[] { match }, ct);
-                await UpsertItemAsync(sec, match, incrementalMode: false, ct);
+                await UpsertItemAsync(sec, match, incrementalMode: false, ct, LiveGoneCheck(plex, sections, listings, ct));
                 await _log.LogAsync($"Webhook scan: {match.Title}");
             }
         }
     }
+
+    /// <summary>
+    /// Gone-check for single-item updates (webhook / live connection), which don't list the whole server: a record's
+    /// key is gone when its library is no longer listed, or that library's listing (fetched on demand, at most once,
+    /// and only when a re-add candidate exists) doesn't contain it. Empty listings count as unknown, never gone.
+    /// </summary>
+    private static Func<LibraryItem, Task<bool>> LiveGoneCheck(IMediaServerClient client, List<PlexSection> sections,
+                                                              Dictionary<string, HashSet<string>> listings, CancellationToken ct)
+        => async r =>
+        {
+            if (sections.Count == 0) return false;
+            var sec = sections.FirstOrDefault(x => x.Key == r.PlexLibrarySectionId);
+            if (sec == null) return true;
+            if (!listings.TryGetValue(sec.Key, out var keys))
+            {
+                keys = (await client.GetSectionItemsAsync(sec, ct)).Select(i => i.RatingKey).ToHashSet();
+                listings[sec.Key] = keys;
+            }
+            return keys.Count > 0 && !keys.Contains(r.PlexRatingKey);
+        };
 
     /// <summary>
     /// The section listing reports every movie as "SDR" because it omits per-stream colour data, and has no
@@ -333,7 +365,14 @@ public class LibraryScanService
     /// </summary>
     public async Task ScanItemAsync(PlexSection sec, PlexMediaItem item, CancellationToken ct = default)
     {
-        await UpsertItemAsync(sec, item, incrementalMode: false, ct);
+        Func<LibraryItem, Task<bool>>? isGone = null;
+        var client = _clientFactory.BuildMediaServerClient();
+        if (client != null)
+        {
+            try { isGone = LiveGoneCheck(client, await client.GetLibrarySectionsAsync(ct), new(), ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* no re-add matching this time */ }
+        }
+        await UpsertItemAsync(sec, item, incrementalMode: false, ct, isGone);
         await _log.LogAsync($"Live update: {item.Title}");
     }
 
@@ -411,12 +450,22 @@ public class LibraryScanService
     }
 
     private async Task<(bool IsNew, bool IsChanged, bool Skipped)> UpsertItemAsync(
-        PlexSection sec, PlexMediaItem plexItem, bool incrementalMode, CancellationToken ct)
+        PlexSection sec, PlexMediaItem plexItem, bool incrementalMode, CancellationToken ct,
+        Func<LibraryItem, Task<bool>>? isGone = null)
     {
         using var db = await _dbFactory.CreateDbContextAsync(ct);
         var existing = await db.LibraryItems
             .Include(i => i.Seasons)
             .FirstOrDefaultAsync(i => i.PlexRatingKey == plexItem.RatingKey, ct);
+
+        // A key Postarr has never seen may be a title the server re-added (library rebuilt, files moved or
+        // replaced): carry the old record (chosen artwork, backups, settings) over instead of starting again.
+        bool adopted = false, posterLost = false, backgroundLost = false;
+        if (existing == null && isGone != null)
+        {
+            (existing, posterLost, backgroundLost) = await TryAdoptReAddedAsync(db, sec, plexItem, isGone, ct);
+            adopted = existing != null;
+        }
 
         bool isNew = existing == null, isChanged = false;
 
@@ -440,8 +489,16 @@ public class LibraryScanService
 
         // Cheap facts straight from the server listing, refreshed on every scan — even when the rest of
         // the item is skipped — so the NEW, runtime, source, versions and language badges stay current.
-        existing.AddedAtUtc            = plexItem.AddedAtUtc ?? existing.AddedAtUtc;
-        existing.LatestSeasonAddedUtc  = plexItem.LatestSeasonAddedUtc ?? existing.LatestSeasonAddedUtc;
+        // Keep the earliest added date: a title the server re-added (or a replaced file) isn't new content, so it
+        // mustn't light up the NEW badge. Season dates can legitimately move forward (a new season), so for a
+        // re-added show only dates clearly after the re-add count.
+        existing.AddedAtUtc = existing.AddedAtUtc.HasValue && plexItem.AddedAtUtc.HasValue
+            ? (plexItem.AddedAtUtc < existing.AddedAtUtc ? plexItem.AddedAtUtc : existing.AddedAtUtc)
+            : plexItem.AddedAtUtc ?? existing.AddedAtUtc;
+        if (plexItem.LatestSeasonAddedUtc.HasValue
+            && !(existing.ReAddedUtc.HasValue && existing.LatestSeasonAddedUtc.HasValue
+                 && plexItem.LatestSeasonAddedUtc <= existing.ReAddedUtc.Value.AddDays(1)))
+            existing.LatestSeasonAddedUtc = plexItem.LatestSeasonAddedUtc;
         existing.RuntimeMinutes        = plexItem.RuntimeMinutes ?? existing.RuntimeMinutes;
         existing.VersionCount          = plexItem.VersionCount ?? existing.VersionCount;
         if (plexItem.MediaType == MediaType.Movie) existing.VideoSource = plexItem.VideoSource;
@@ -468,7 +525,7 @@ public class LibraryScanService
         // Incremental mode: if this item already exists, hasn't changed, and already has
         // a poster, skip all the expensive work below (TMDB enrichment, poster search).
         // Still touch LastSeenAtUtc so Plex-side deletions can be detected later.
-        if (incrementalMode && !isNew && !isChanged && !seasonsChanged && !string.IsNullOrEmpty(existing.CurrentPosterUrl))
+        if (incrementalMode && !isNew && !adopted && !isChanged && !seasonsChanged && !string.IsNullOrEmpty(existing.CurrentPosterUrl))
         {
             existing.LastSeenAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
@@ -560,9 +617,25 @@ public class LibraryScanService
 
         // Upsert seasons
         bool anyNewSeason = false;
+        var reKeyedSeasons   = new List<SeasonItem>();
+        var listedSeasonKeys = plexItem.Seasons.Select(p => p.RatingKey).ToHashSet();
         foreach (var ps in plexItem.Seasons)
         {
             var s = existing.Seasons.FirstOrDefault(x => x.PlexRatingKey == ps.RatingKey);
+            // Same season under a new key (the show was re-added): keep its chosen poster and backup.
+            var moved = s == null
+                ? existing.Seasons.FirstOrDefault(x => x.SeasonNumber == ps.SeasonNumber && !listedSeasonKeys.Contains(x.PlexRatingKey))
+                : null;
+            if (moved != null)
+            {
+                _backup.MoveItemBackup(moved.PlexRatingKey, ps.RatingKey);
+                moved.PlexRatingKey = ps.RatingKey;
+                moved.Title = ps.Title; moved.EpisodeCount = ps.LeafCount;
+                if (!IsReapplyable(moved.CurrentPosterUrl, moved.CurrentPosterSource))
+                { moved.CurrentPosterUrl = null; moved.CurrentPosterSource = null; }
+                else reKeyedSeasons.Add(moved);
+                continue;
+            }
             if (s == null)
             {
                 existing.Seasons.Add(new SeasonItem { PlexRatingKey = ps.RatingKey, SeasonNumber = ps.SeasonNumber, Title = ps.Title, EpisodeCount = ps.LeafCount, IsNew = true });
@@ -588,12 +661,97 @@ public class LibraryScanService
             await MaybeAutoSelectBackgroundAsync(existing.Id, reason, ct);
         }
 
+        if (adopted) await ReapplyCarriedOverAsync(existing, posterLost, backgroundLost, ct);
+        if (reKeyedSeasons.Count > 0 && _settings.Get().AutoApplyOnScan)
+            foreach (var rs in reKeyedSeasons)
+            {
+                try { await _applyService.ApplyCurrentSeasonPosterAsync(rs.Id, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { /* Apply All will retry */ }
+            }
+
         // Auto-select season posters for new seasons or shows
         if (anyNewSeason || isNew)
             await MaybeAutoSelectSeasonPostersAsync(existing.Id, ct);
 
         if (newBadgeStale) await ReapplyForNewBadgeAsync(existing.Id, ct);
         return (isNew, isChanged, false);
+    }
+
+    // ── Re-added titles ────────────────────────────────────────────────────────────────────────────────
+    // When a server re-adds a title under a new key (a library deleted and re-created, files moved, a file
+    // replaced), the old record would otherwise be pruned, losing the chosen poster, background, season posters
+    // and the backup of the original artwork, and the title would start again as "new". Instead, find the
+    // record for the same title (same TMDB / TVDB / IMDb id and type) whose own key the server no longer has,
+    // and move it to the new key.
+
+    private async Task<(LibraryItem? Item, bool PosterLost, bool BackgroundLost)> TryAdoptReAddedAsync(
+        PostarrDbContext db, PlexSection sec, PlexMediaItem plexItem, Func<LibraryItem, Task<bool>> isGone, CancellationToken ct)
+    {
+        string? tmdb = NullIfEmpty(plexItem.TmdbId), tvdb = NullIfEmpty(plexItem.TvdbId), imdb = NullIfEmpty(plexItem.ImdbId);
+        if (tmdb == null && tvdb == null && imdb == null) return (null, false, false);
+        try
+        {
+            var server = _clientFactory.MediaServerName;
+            var candidates = await db.LibraryItems.Include(i => i.Seasons)
+                .Where(i => i.ServerType == server && i.MediaType == plexItem.MediaType && i.PlexRatingKey != plexItem.RatingKey
+                            && ((tmdb != null && i.TmdbId == tmdb) || (tvdb != null && i.TvdbId == tvdb) || (imdb != null && i.ImdbId == imdb)))
+                .ToListAsync(ct);
+            var gone = new List<LibraryItem>();
+            foreach (var c in candidates) if (await isGone(c)) gone.Add(c);
+            if (gone.Count == 0) return (null, false, false);
+
+            // Several (e.g. a 4K and an HD library both rebuilt)? Only a same-library match is unambiguous.
+            LibraryItem? pick = gone.Count == 1 ? gone[0] : null;
+            if (pick == null)
+            {
+                var same = gone.Where(g => g.PlexLibrarySectionId == sec.Key).ToList();
+                if (same.Count == 1) pick = same[0];
+            }
+            if (pick == null) return (null, false, false);
+
+            var oldKey = pick.PlexRatingKey;
+            _backup.MoveItemBackup(oldKey, plexItem.RatingKey);
+            pick.PlexRatingKey        = plexItem.RatingKey;
+            pick.PlexLibrarySectionId = sec.Key;
+            pick.ReAddedUtc           = DateTime.UtcNow;
+            pick.NewBadgeOnPoster     = false;
+            // The server's copy has none of our artwork any more. Picks of the old server item's own images
+            // (or uploads) went with it; everything else is pushed again.
+            pick.PosterAppliedToPlex = false;
+            bool posterLost = !string.IsNullOrEmpty(pick.CurrentPosterUrl) && !IsReapplyable(pick.CurrentPosterUrl, pick.CurrentPosterSource);
+            if (posterLost) { pick.CurrentPosterUrl = null; pick.CurrentPosterSource = null; }
+            pick.BackgroundAppliedToPlex = false;
+            bool backgroundLost = !string.IsNullOrEmpty(pick.CurrentBackgroundUrl) && !IsReapplyable(pick.CurrentBackgroundUrl, pick.CurrentBackgroundSource);
+            if (backgroundLost) { pick.CurrentBackgroundUrl = null; pick.CurrentBackgroundSource = null; }
+
+            await _log.LogAsync($"Re-added in {server}: '{pick.Title}' (was {oldKey}, now {plexItem.RatingKey}) - kept its artwork choices and backups.");
+            return (pick, posterLost, backgroundLost);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await _log.LogAsync($"Couldn't check whether '{plexItem.Title}' was re-added: {ex.Message}", "Warning");
+            return (null, false, false);
+        }
+    }
+
+    // Artwork Postarr can push again from its source. A pick of the server's own image (or an uploaded file) can't
+    // be: it lived on the old server item.
+    private static bool IsReapplyable(string? url, string? source) =>
+        !string.IsNullOrEmpty(url) && url.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+        && source != nameof(PosterSource.Plex) && source != nameof(PosterSource.Local);
+
+    private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+    private async Task ReapplyCarriedOverAsync(LibraryItem item, bool posterLost, bool backgroundLost, CancellationToken ct)
+    {
+        // A choice that couldn't come across gets the usual automatic pick; artwork that was never chosen stays unchosen.
+        if (posterLost)     await MaybeAutoSelectPosterAsync(item.Id, "Re-added", ct);
+        if (backgroundLost) await MaybeAutoSelectBackgroundAsync(item.Id, "Re-added", ct);
+        if (!_settings.Get().AutoApplyOnScan) return;   // otherwise it shows as "not applied" for Apply All
+        try { if (!string.IsNullOrEmpty(item.CurrentPosterUrl))     await _applyService.ApplyCurrentPosterAsync(item.Id, force: true, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { }
+        try { if (!string.IsNullOrEmpty(item.CurrentBackgroundUrl)) await _applyService.ApplyCurrentBackgroundAsync(item.Id, force: true, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { }
     }
 
     // With auto-apply on, a poster whose NEW badge just appeared/expired is re-pushed immediately;

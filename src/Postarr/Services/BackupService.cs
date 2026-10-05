@@ -117,6 +117,29 @@ public class BackupService
         catch { /* leftover backup files are harmless */ }
     }
 
+    /// <summary>
+    /// Moves an item's backup folder to a new key — used when the server re-adds a title under a new key and
+    /// Postarr carries the record over, so the backed-up original artwork follows it. Files already at the
+    /// destination win. Non-fatal: a failed move only means that backup stays under the old key.
+    /// </summary>
+    public void MoveItemBackup(string oldKey, string newKey)
+    {
+        try
+        {
+            var from = Path.Combine(GetBackupDirectory(), SanitiseKey(oldKey));
+            var to   = Path.Combine(GetBackupDirectory(), SanitiseKey(newKey));
+            if (!Directory.Exists(from) || from == to) return;
+            if (!Directory.Exists(to)) { Directory.Move(from, to); return; }
+            foreach (var f in Directory.GetFiles(from))
+            {
+                var dest = Path.Combine(to, Path.GetFileName(f));
+                if (!File.Exists(dest)) File.Move(f, dest);
+            }
+            Directory.Delete(from, recursive: true);
+        }
+        catch { /* the backup just stays under the old key */ }
+    }
+
     private static string SanitiseKey(string key) =>
         string.Concat(key.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 

@@ -226,6 +226,10 @@ public class LibraryItem
     public DateTime  LastSeenAtUtc             { get; set; }
     public DateTime? LastPosterAppliedUtc       { get; set; }
     public DateTime? LastBackgroundAppliedUtc   { get; set; }
+    // When the server last re-added this title under a new key (library rebuilt, files moved) and Postarr carried
+    // the existing record over to it. The server's added dates from around then are the re-add, not new content,
+    // so they don't trigger the NEW / NEW SEASON badges.
+    public DateTime? ReAddedUtc                 { get; set; }
 
     public List<SeasonItem> Seasons { get; set; } = new();
 }
