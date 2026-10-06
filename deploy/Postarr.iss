@@ -9,7 +9,7 @@
 ; Both can be overridden on the command line, which is how the GitHub release build uses this script:
 ;   ISCC /DAppVersion=1.8.0 /DSourceRoot=<checkout folder> deploy\Postarr.iss
 #ifndef AppVersion
-  #define AppVersion "1.7.4"
+  #define AppVersion "1.7.5"
 #endif
 #ifndef SourceRoot
   #define SourceRoot "C:\CuratarrC"

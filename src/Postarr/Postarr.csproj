@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Postarr</RootNamespace>
     <AssemblyName>Postarr</AssemblyName>
-    <Version>1.7.4</Version>
+    <Version>1.7.5</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Ship self-contained: the Plex server has no .NET runtime installed, so a framework-dependent
          publish fails to launch ("No frameworks were found"). Only applies when a RID is given

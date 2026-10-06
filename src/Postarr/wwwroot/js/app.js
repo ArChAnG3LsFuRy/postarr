@@ -237,12 +237,15 @@ function reloadCurrentView() {
 }
 
 // ── Grid filters ──────────────────────────────────────────────────────────────
+const RECENT_LIMIT = 100;
 // The filter dropdown composes with the title search: both just toggle card visibility, so they
 // stack. Options adapt to the view — backgrounds filter on background state, collections have no
 // ratings/resolution, etc.
 const FILTER_OPTIONS = {
   poster: [
-    ['all', 'All items'], ['no-art', 'No poster'], ['pending', 'Not applied yet'],
+    ['all', 'All items'],
+    ['recent-added', `Recently added (newest ${RECENT_LIMIT})`], ['recent-changed', `Recently changed (newest ${RECENT_LIMIT})`],
+    ['no-art', 'No poster'], ['pending', 'Not applied yet'],
     ['no-ratings', 'Missing ratings'],
     ['res-4k', 'Resolution: 4K'], ['res-1080', 'Resolution: 1080p'],
     ['res-720', 'Resolution: 720p'], ['res-sd', 'Resolution: SD'],
@@ -250,6 +253,18 @@ const FILTER_OPTIONS = {
   background: [['all', 'All items'], ['no-art', 'No background'], ['pending', 'Not applied yet']],
   collection: [['all', 'All collections'], ['no-art', 'No poster']],
 };
+
+// "Recently added / changed": the newest RECENT_LIMIT items, newest first. Shows count a newly arrived season as
+// an addition and a season poster as a change. Returns id → position, or null for any other filter.
+const _ts = v => (v ? Date.parse(v) || 0 : 0);
+function recentRanks(items, f) {
+  if (f !== 'recent-added' && f !== 'recent-changed') return null;
+  const when = f === 'recent-added'
+    ? i => Math.max(_ts(i.addedAtUtc), _ts(i.latestSeasonAddedUtc))
+    : i => Math.max(_ts(i.lastPosterAppliedUtc), ...(i.seasons || []).map(s => _ts(s.lastPosterAppliedUtc)));
+  return new Map(items.map(i => [i.id, when(i)]).filter(([, t]) => t > 0)
+    .sort((a, b) => b[1] - a[1]).slice(0, RECENT_LIMIT).map(([id], n) => [id, n]));
+}
 
 function currentViewMeta() {
   switch (S.view) {
@@ -313,14 +328,19 @@ function applyGridFilters() {
   const f    = el('#filter-box')?.value || 'all';
   const byId = new Map(items.map(i => [i.id, i]));
   const sel  = `#view-${S.view}`;
+  const ranks = recentRanks(items, f);   // date-ordered views reorder the cards (grid `order`) instead of A–Z
   els(`${sel} .poster-card, ${sel} .bg-card`).forEach(card => {
     const id   = +(card.dataset.id ?? card.dataset.colId);
     const item = byId.get(id);
     const titleOk  = (card.querySelector('.item-title')?.textContent.toLowerCase() ?? '').includes(term);
-    const filterOk = item ? passesFilter(item, kind, f) : true;
+    const filterOk = ranks ? ranks.has(id) : item ? passesFilter(item, kind, f) : true;
     card.style.display = (titleOk && filterOk) ? '' : 'none';
+    card.style.order   = ranks && ranks.has(id) ? String(ranks.get(id)) : '';
   });
-  if (_azView && _azView.id === `view-${S.view}`) buildAzBar(_azView);
+  // Letter jumps make no sense in date order; bring the A–Z bar back for the other filters.
+  const viewEl = el(sel);
+  if (ranks) { if (_azView === viewEl) hideAzBar(); }
+  else if (viewEl) buildAzBar(viewEl);
 }
 
 // ── Multi-select bulk actions ─────────────────────────────────────────────────
