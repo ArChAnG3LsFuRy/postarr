@@ -40,6 +40,9 @@ public class PlexMediaItem
     // Ratings the server already holds (from the item-details fetch). ServerRatingsKnown = that fetch
     // succeeded for this item, so a null score really means "the server has none".
     public bool      ServerRatingsKnown    { get; set; }
+    // The item-details fetch failed for this item this time, so its dynamic range is unknown (the listing's "SDR"
+    // is a placeholder, not a reading). Not stored.
+    public bool      DetailsUnavailable    { get; set; }
     public double?   ServerImdbRating      { get; set; }
     public int?      ServerRottenTomatoes  { get; set; }
     public int?      ServerAudienceScore   { get; set; }
@@ -333,10 +336,33 @@ public class PlexClient : IMediaServerClient
         for (int i = 0; i < keys.Count; i += batchSize)
         {
             ct.ThrowIfCancellationRequested();
-            var slice = keys.GetRange(i, Math.Min(batchSize, keys.Count - i));
-            XElement xml;
-            try { xml = await GetXmlAsync($"/library/metadata/{string.Join(",", slice)}", ct); }
-            catch { continue; } // a bad key in the batch shouldn't sink the rest of the scan
+            await AddStreamDetailsAsync(keys.GetRange(i, Math.Min(batchSize, keys.Count - i)), result, ct);
+        }
+        return result;
+    }
+
+    // One batch of item details. A busy server (Plex runs its nightly maintenance in the small hours, when scheduled
+    // scans run too) can time a 50-item request out, so a failed batch is retried in smaller pieces; items that still
+    // can't be fetched are reported Unavailable rather than left out, so the scan keeps their known HDR/DV instead of
+    // reading the listing's placeholder "SDR" as a quality change.
+    private async Task AddStreamDetailsAsync(List<string> slice, Dictionary<string, StreamDetails> result, CancellationToken ct)
+    {
+        XElement? xml = null;
+        try { xml = await GetXmlAsync($"/library/metadata/{string.Join(",", slice)}", ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { }
+        if (xml == null)
+        {
+            if (slice.Count > 10)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                for (int j = 0; j < slice.Count; j += 10)
+                    await AddStreamDetailsAsync(slice.GetRange(j, Math.Min(10, slice.Count - j)), result, ct);
+            }
+            else
+                foreach (var k in slice) result[k] = new StreamDetails(null, null, null, Unavailable: true);
+            return;
+        }
+        {
             // Movies/episodes come back as <Video>, shows as <Directory> (no streams, but they do have ratings).
             foreach (var v in xml.Elements().Where(e => e.Name == "Video" || e.Name == "Directory"))
             {
@@ -358,7 +384,6 @@ public class PlexClient : IMediaServerClient
                     imdb, rt, aud);
             }
         }
-        return result;
     }
 
     // Plex's agents store several scores per item, e.g.

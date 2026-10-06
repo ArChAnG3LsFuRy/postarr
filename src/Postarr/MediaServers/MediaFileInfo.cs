@@ -6,8 +6,11 @@ namespace Postarr.MediaServers;
 /// Per-item details from a server's full item metadata (Plex needs a second fetch for these): stream facts,
 /// plus the IMDb / Rotten Tomatoes scores the server already holds (Plex only; null when it has none).
 /// </summary>
+/// Unavailable = the server couldn't be asked for this item this time (busy, timed out): everything is unknown,
+/// so callers keep what they already had instead of treating the listing's defaults ("SDR") as fact.
 public record StreamDetails(string? DynamicRange, int? AudioLanguages, int? SubtitleLanguages,
-                            double? ImdbRating = null, int? RottenTomatoes = null, int? AudienceScore = null);
+                            double? ImdbRating = null, int? RottenTomatoes = null, int? AudienceScore = null,
+                            bool Unavailable = false);
 
 /// <summary>
 /// Server-neutral helpers for the file-derived badges, so Plex, Jellyfin and Emby classify identically.

@@ -345,7 +345,9 @@ public class LibraryScanService
         {
             var details = await plex.GetStreamDetailsAsync(list.Select(i => i.RatingKey), ct);
             foreach (var item in list)
-                if (details.TryGetValue(item.RatingKey, out var d))
+                if (details.TryGetValue(item.RatingKey, out var d) && d.Unavailable)
+                    item.DetailsUnavailable = true;
+                else if (d != null)
                 {
                     if (d.DynamicRange != null)      item.VideoDynamicRange     = d.DynamicRange;
                     if (d.AudioLanguages != null)    item.AudioLanguageCount    = d.AudioLanguages;
@@ -478,6 +480,9 @@ public class LibraryScanService
         else
         {
             existing.ServerType = _clientFactory.MediaServerName;
+            // The server couldn't give this item's details this time: its dynamic range is unknown, not "SDR".
+            if (plexItem.DetailsUnavailable && !string.IsNullOrEmpty(existing.VideoDynamicRange))
+                plexItem.VideoDynamicRange = existing.VideoDynamicRange;
             // Only movies expose top-level resolution here. For shows, plexItem's values
             // are always null (quality is derived from episodes further below), so a change
             // is never detected from this comparison — and comparing the show's *derived*
@@ -654,12 +659,13 @@ public class LibraryScanService
 
         await db.SaveChangesAsync(ct);
 
-        if (isNew || isChanged)
+        if (isNew)
         {
-            var reason = isNew ? "New item" : "Quality changed";
-            await MaybeAutoSelectPosterAsync(existing.Id, reason, ct);
-            await MaybeAutoSelectBackgroundAsync(existing.Id, reason, ct);
+            await MaybeAutoSelectPosterAsync(existing.Id, "New item", ct);
+            await MaybeAutoSelectBackgroundAsync(existing.Id, "New item", ct);
         }
+        else if (isChanged)
+            await OnQualityChangedAsync(existing, ct);
 
         if (adopted) await ReapplyCarriedOverAsync(existing, posterLost, backgroundLost, ct);
         if (reKeyedSeasons.Count > 0 && _settings.Get().AutoApplyOnScan)
@@ -752,6 +758,26 @@ public class LibraryScanService
         catch (Exception ex) when (ex is not OperationCanceledException) { }
         try { if (!string.IsNullOrEmpty(item.CurrentBackgroundUrl)) await _applyService.ApplyCurrentBackgroundAsync(item.Id, force: true, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException) { }
+    }
+
+    // A new file / quality only changes the badges, so the chosen poster stays: it's re-rendered and re-pushed
+    // (right away with auto-apply, otherwise via Apply All). Only an item with no poster yet gets an automatic pick.
+    private async Task OnQualityChangedAsync(LibraryItem item, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(item.CurrentPosterUrl))
+        {
+            await MaybeAutoSelectPosterAsync(item.Id, "Quality changed", ct);
+            return;
+        }
+        await _log.LogAsync($"Quality changed: {item.Title} ({item.VideoResolution} {item.VideoDynamicRange}) - keeping its poster, updating badges.");
+        using (var db = await _dbFactory.CreateDbContextAsync(ct))
+        {
+            var row = await db.LibraryItems.FindAsync(new object[] { item.Id }, ct);
+            if (row != null) { row.PosterAppliedToPlex = false; await db.SaveChangesAsync(ct); }
+        }
+        if (!_settings.Get().AutoApplyOnScan) return;
+        try { await _applyService.ApplyCurrentPosterAsync(item.Id, force: true, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { /* stays pending; Apply All will retry */ }
     }
 
     // With auto-apply on, a poster whose NEW badge just appeared/expired is re-pushed immediately;
