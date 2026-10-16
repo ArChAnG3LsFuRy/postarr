@@ -98,6 +98,7 @@ public static class DatabaseInitialiser
         await EnsureColumnAsync(conn, "LibraryItems", "Directors",             "TEXT",    null);
         await EnsureColumnAsync(conn, "LibraryItems", "TmdbDetailsVersion",    "INTEGER", "0");
         await EnsureColumnAsync(conn, "LibraryItems", "ReAddedUtc",            "TEXT",    null);
+        await EnsureColumnAsync(conn, "LibraryItems", "MissingSinceUtc",       "TEXT",    null);
 
         // Tables introduced after the database was first created (EnsureCreated only builds them on a new DB).
         await ExecAsync(conn, """

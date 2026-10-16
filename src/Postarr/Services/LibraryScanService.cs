@@ -47,6 +47,45 @@ public class LibraryScanService
 
     public bool IsScanning => _isScanning;
 
+    // How long a title the server stopped listing is kept (hidden) before its record and backups are removed, and the
+    // most that may go automatically at once: more than that looks like a fault and waits for the user.
+    public static readonly TimeSpan MissingGrace = TimeSpan.FromDays(7);
+    private static int AutoRemoveLimit(int libraryItems) => Math.Max(25, libraryItems / 20);
+
+    public record MissingSummary(int Items, DateTime? OldestSinceUtc, List<string> SampleTitles, bool WaitingForUser);
+
+    /// <summary>Titles the server stopped listing that Postarr is keeping hidden (null-free; Items = 0 when none).</summary>
+    public async Task<MissingSummary> GetMissingAsync(CancellationToken ct = default)
+    {
+        var server = _clientFactory.MediaServerName;
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var rows = await db.LibraryItems.AsNoTracking().IgnoreQueryFilters()
+            .Where(i => i.ServerType == server && i.MissingSinceUtc != null)
+            .Select(i => new { i.Title, i.MissingSinceUtc })
+            .ToListAsync(ct);
+        var oldest = rows.Count == 0 ? null : rows.Min(r => r.MissingSinceUtc);
+        return new MissingSummary(rows.Count, oldest,
+            rows.OrderBy(r => r.Title).Select(r => r.Title).Take(12).ToList(),
+            oldest.HasValue && oldest.Value <= DateTime.UtcNow - MissingGrace);
+    }
+
+    /// <summary>Removes every hidden "missing" record now (Health page), with its stored backups.</summary>
+    public async Task<int> RemoveMissingAsync(CancellationToken ct = default)
+    {
+        if (_isScanning) return -1;
+        var server = _clientFactory.MediaServerName;
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var rows = await db.LibraryItems.IgnoreQueryFilters()
+            .Where(i => i.ServerType == server && i.MissingSinceUtc != null).ToListAsync(ct);
+        if (rows.Count == 0) return 0;
+        db.LibraryItems.RemoveRange(rows);
+        await db.SaveChangesAsync(ct);
+        foreach (var r in rows) _backup.DeleteItemBackup(r.PlexRatingKey);
+        await _log.LogAsync($"Removed {rows.Count} item(s) missing from {server} (confirmed on the Health page): " +
+                            string.Join(", ", rows.Take(20).Select(r => r.Title)));
+        return rows.Count;
+    }
+
     // ── Libraries that no longer exist on the media server ──────────────────────────────────────────
     // A scan only prunes items inside libraries the server still lists, so an outage or a library that is
     // deleted and later restored (Plex rebuilt from a backup) can never wipe Postarr's records. The flip
@@ -64,7 +103,7 @@ public class LibraryScanService
 
         var server = _clientFactory.MediaServerName;
         using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var items = await db.LibraryItems.AsNoTracking()
+        var items = await db.LibraryItems.AsNoTracking().IgnoreQueryFilters()
             .Where(i => i.ServerType == server && i.PlexLibrarySectionId != "")
             .Select(i => new { i.PlexLibrarySectionId, i.Title, i.AddedAtUtc })
             .ToListAsync(ct);
@@ -93,7 +132,7 @@ public class LibraryScanService
 
         var server = _clientFactory.MediaServerName;
         using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var items = await db.LibraryItems.Where(i => i.ServerType == server && i.PlexLibrarySectionId == sectionId).ToListAsync(ct);
+        var items = await db.LibraryItems.IgnoreQueryFilters().Where(i => i.ServerType == server && i.PlexLibrarySectionId == sectionId).ToListAsync(ct);
         var cols  = await db.Collections.Where(c => c.ServerType == server && c.PlexLibrarySectionId == sectionId).ToListAsync(ct);
         if (items.Count == 0 && cols.Count == 0) return (0, 0);
 
@@ -204,30 +243,43 @@ public class LibraryScanService
                 await _notifier.ItemScannedAsync(plexItem.Title, "scanned", processed, allItems.Count);
             }
 
-            // ── Prune items no longer in Plex ─────────────────────────────────────
-            // Plex assigns a NEW rating key when a file is replaced/re-downloaded, so the old
-            // item would otherwise linger forever as a duplicate (old poster stays alongside the
-            // new one). Remove DB items whose rating key wasn't seen this scan — but only within
-            // sections that actually returned items, so a transient empty/failed listing can't
-            // wipe the library. Seasons cascade-delete with their show.
+            // ── Items no longer on the server ─────────────────────────────────────
+            // Only within sections that returned items, so a transient empty/failed listing can't touch the library.
+            // A missing item is hidden, not deleted: servers drop titles temporarily (a drive or share offline, a
+            // library being re-scanned) and often bring them back under new keys, which the re-add matching in
+            // UpsertItemAsync can only recognise while the old record still exists. After MissingGrace the record is
+            // removed with its backups, automatically for a handful of titles, but a mass disappearance waits for the
+            // user (Health page), since that is far more likely a fault than hundreds of deliberate deletions.
             try
             {
                 var seenKeys        = allItems.Select(x => x.Item.RatingKey).ToHashSet();
                 var scannedSections = allItems.Select(x => x.Sec.Key).ToHashSet();
                 var server          = _clientFactory.MediaServerName;   // never prune another server's items
+                var now             = DateTime.UtcNow;
                 using var pruneDb   = await _dbFactory.CreateDbContextAsync(ct);
-                var candidates = await pruneDb.LibraryItems
+                var candidates = await pruneDb.LibraryItems.IgnoreQueryFilters()
                     .Where(i => scannedSections.Contains(i.PlexLibrarySectionId) && i.ServerType == server)
                     .ToListAsync(ct);
                 var orphans = candidates.Where(i => !seenKeys.Contains(i.PlexRatingKey)).ToList();
-                if (orphans.Count > 0)
+
+                var newlyMissing = orphans.Where(i => i.MissingSinceUtc == null).ToList();
+                foreach (var o in newlyMissing) o.MissingSinceUtc = now;
+                var expired = orphans.Where(i => i.MissingSinceUtc <= now - MissingGrace).ToList();
+                bool autoRemove = expired.Count > 0 && expired.Count <= AutoRemoveLimit(candidates.Count);
+                if (autoRemove) pruneDb.LibraryItems.RemoveRange(expired);
+                await pruneDb.SaveChangesAsync(ct);
+
+                if (newlyMissing.Count > 0)
+                    await _log.LogAsync($"{newlyMissing.Count} item(s) no longer listed by {server} - hidden and kept for " +
+                                        $"{MissingGrace.TotalDays:0} days in case they come back: {string.Join(", ", newlyMissing.Take(20).Select(o => o.Title))}",
+                                        newlyMissing.Count > AutoRemoveLimit(candidates.Count) ? "Warning" : "Info");
+                if (autoRemove)
                 {
-                    pruneDb.LibraryItems.RemoveRange(orphans);
-                    await pruneDb.SaveChangesAsync(ct);
                     // Also delete each removed item's stored original-poster backup so it doesn't
                     // linger as orphaned files once the media (and its Plex poster) are gone.
-                    foreach (var o in orphans) _backup.DeleteItemBackup(o.PlexRatingKey);
-                    await _log.LogAsync($"Removed {orphans.Count} item(s) no longer in {_clientFactory.MediaServerName}:{string.Join(", ", orphans.Take(20).Select(o => o.Title))}");
+                    foreach (var o in expired) _backup.DeleteItemBackup(o.PlexRatingKey);
+                    await _log.LogAsync($"Removed {expired.Count} item(s) missing from {server} for over {MissingGrace.TotalDays:0} days: " +
+                                        string.Join(", ", expired.Take(20).Select(o => o.Title)));
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -456,9 +508,10 @@ public class LibraryScanService
         Func<LibraryItem, Task<bool>>? isGone = null)
     {
         using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var existing = await db.LibraryItems
+        var existing = await db.LibraryItems.IgnoreQueryFilters()
             .Include(i => i.Seasons)
             .FirstOrDefaultAsync(i => i.PlexRatingKey == plexItem.RatingKey, ct);
+        if (existing?.MissingSinceUtc != null) existing.MissingSinceUtc = null;   // back on the server: visible again
 
         // A key Postarr has never seen may be a title the server re-added (library rebuilt, files moved or
         // replaced): carry the old record (chosen artwork, backups, settings) over instead of starting again.
@@ -698,7 +751,7 @@ public class LibraryScanService
         try
         {
             var server = _clientFactory.MediaServerName;
-            var candidates = await db.LibraryItems.Include(i => i.Seasons)
+            var candidates = await db.LibraryItems.IgnoreQueryFilters().Include(i => i.Seasons)
                 .Where(i => i.ServerType == server && i.MediaType == plexItem.MediaType && i.PlexRatingKey != plexItem.RatingKey
                             && ((tmdb != null && i.TmdbId == tmdb) || (tvdb != null && i.TvdbId == tvdb) || (imdb != null && i.ImdbId == imdb)))
                 .ToListAsync(ct);
@@ -720,6 +773,7 @@ public class LibraryScanService
             pick.PlexRatingKey        = plexItem.RatingKey;
             pick.PlexLibrarySectionId = sec.Key;
             pick.ReAddedUtc           = DateTime.UtcNow;
+            pick.MissingSinceUtc      = null;
             pick.NewBadgeOnPoster     = false;
             // The server's copy has none of our artwork any more. Picks of the old server item's own images
             // (or uploads) went with it; everything else is pushed again.

@@ -2027,6 +2027,21 @@ async function renderHealth() {
         ${stale}
       </div>` : '';
 
+  // Titles the server stopped listing: hidden and kept for a while in case they come back (a drive that dropped
+  // out, a library re-scanned under new IDs), so their chosen artwork survives.
+  const m = h.missing;
+  const missingCard = m && m.items ? `
+      <div class="hst-card">
+        <div class="hst-title">${m.items} title${m.items === 1 ? '' : 's'} no longer in ${esc(srvName())}</div>
+        <div class="hi-desc">${esc(srvName())} stopped listing these${m.oldestSinceUtc ? ` (since ${localTime(m.oldestSinceUtc)})` : ''}. Postarr has hidden
+          them but kept their chosen artwork, so if they come back — even under new IDs — they pick up where they left off.
+          ${m.waitingForUser
+            ? `They’ve been gone over ${h.missingGraceDays} days and there are too many to remove automatically — if they really are gone, remove them here.`
+            : `They’re removed automatically after ${h.missingGraceDays} days (a large batch waits for you to confirm).`}</div>
+        <div class="hst-titles">${esc(m.sampleTitles.join(', '))}${m.items > m.sampleTitles.length ? '…' : ''}</div>
+        <button class="btn-restore" data-missing-remove="${m.items}">Remove now</button>
+      </div>` : '';
+
   c.innerHTML = `
     <div class="health-wrap">
       <div class="health-card">
@@ -2036,6 +2051,7 @@ async function renderHealth() {
       </div>
       <div class="health-card">
         <h3>Library — ${h.counts.movies} movies · ${h.counts.shows} shows · ${h.counts.collections} collections</h3>
+        ${missingCard}
         ${staleCard}
         <div class="hi-groups">${groups}</div>
       </div>
@@ -2597,6 +2613,25 @@ function updateHealthBadge(h) {
   b.textContent = n > 999 ? '999+' : String(n);
   b.hidden = n === 0;
 }
+
+// Health → "Titles no longer in <server>" → Remove now.
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-missing-remove]');
+  if (!b) return;
+  if (!confirm(`Remove ${b.dataset.missingRemove} title(s) that ${srvName()} no longer lists?
+
+Their chosen posters and stored original-poster backups ` +
+               `are removed from Postarr, so if they come back later they start fresh. Nothing changes on ${srvName()}.`)) return;
+  b.disabled = true; b.textContent = 'Removing…';
+  try {
+    const r = await api('/health/missing/remove', { method: 'POST' });
+    toast(`Removed ${r.items} title(s).`);
+    renderHealth();
+  } catch (err) {
+    toast(err.message, true);
+    b.disabled = false; b.textContent = 'Remove now';
+  }
+});
 
 // Health → "Libraries no longer in <server>" → Remove.
 document.addEventListener('click', async e => {

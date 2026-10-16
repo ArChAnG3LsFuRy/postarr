@@ -18,6 +18,10 @@ public class PostarrDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder m)
     {
         m.Entity<LibraryItem>().HasIndex(i => i.PlexRatingKey).IsUnique();
+        // Items the server stopped listing are kept for a while (LibraryItem.MissingSinceUtc) but invisible everywhere —
+        // grids, Health, Apply All, collections. Code that must see them (the scan, Health's clean-up) uses
+        // IgnoreQueryFilters().
+        m.Entity<LibraryItem>().HasQueryFilter(i => i.MissingSinceUtc == null);
         m.Entity<LibraryItem>().HasMany(i => i.Seasons).WithOne()
             .HasForeignKey(s => s.LibraryItemId).OnDelete(DeleteBehavior.Cascade);
         m.Entity<SeasonItem>().HasIndex(s => s.PlexRatingKey).IsUnique();

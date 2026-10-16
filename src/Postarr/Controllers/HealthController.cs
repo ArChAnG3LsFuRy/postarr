@@ -107,11 +107,14 @@ public class HealthController : ControllerBase
 
         // Libraries Postarr still has items for but the server no longer lists (live lookup, so full view only).
         var staleLibraries = quick ? null : await _scan.GetStaleLibrariesAsync();
+        var missing        = quick ? null : await _scan.GetMissingAsync();
 
         return Ok(new
         {
             services,
             staleLibraries = staleLibraries ?? new List<LibraryScanService.StaleLibrary>(),
+            missing,
+            missingGraceDays = (int)LibraryScanService.MissingGrace.TotalDays,
             scan = new
             {
                 isScanning     = _scan.IsScanning,
@@ -125,6 +128,15 @@ public class HealthController : ControllerBase
             },
             issues = new { noPoster, notApplied, noId, noRatings },
         });
+    }
+
+    /// <summary>Removes the hidden titles the media server stopped listing (Health page → Remove), with their backups.</summary>
+    [HttpPost("missing/remove")]
+    public async Task<IActionResult> RemoveMissing()
+    {
+        var n = await _scan.RemoveMissingAsync();
+        if (n < 0) return Conflict(new { error = "A scan is running — try again when it has finished." });
+        return Ok(new { items = n });
     }
 
     /// <summary>Forget a library the media server no longer has (Health page → Remove). Postarr's records only;

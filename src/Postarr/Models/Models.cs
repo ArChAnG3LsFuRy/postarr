@@ -230,6 +230,10 @@ public class LibraryItem
     // the existing record over to it. The server's added dates from around then are the re-add, not new content,
     // so they don't trigger the NEW / NEW SEASON badges.
     public DateTime? ReAddedUtc                 { get; set; }
+    // Set when a scan no longer finds the item on the server. The item is hidden (a global query filter) but kept for a
+    // grace period, so a title that comes back (a drive that dropped out, a library re-scanned under new keys) keeps its
+    // chosen artwork and backups instead of starting again. Cleared as soon as the server lists it again.
+    public DateTime? MissingSinceUtc            { get; set; }
 
     public List<SeasonItem> Seasons { get; set; } = new();
 }
