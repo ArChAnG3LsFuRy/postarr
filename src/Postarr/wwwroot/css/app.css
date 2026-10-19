@@ -908,3 +908,16 @@ body.select-mode .bg-card .card-actions { pointer-events:none; opacity:0; }  /* 
 .about-version { font-size:13.5px; color:var(--text-primary); margin-bottom:8px; }
 .about-links { display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; font-size:12.5px; }
 .about-links a { color:var(--accent); }
+
+/* Settings → Backup → database backups */
+.dbb-head { margin-top:18px; padding-top:14px; border-top:1px solid var(--border-subtle); font-size:13.5px; font-weight:700; color:var(--text-primary); }
+.dbb-actions { margin:10px 0 8px; }
+.dbb-list { display:flex; flex-direction:column; gap:4px; }
+.dbb-row { display:grid; grid-template-columns: minmax(150px,1.3fr) minmax(120px,1.2fr) 70px auto auto; gap:10px; align-items:center;
+  padding:6px 10px; background:var(--bg-panel-raised); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); font-size:12.5px; }
+.dbb-when { color:var(--text-primary); }
+.dbb-kind, .dbb-size { color:var(--text-tertiary); }
+.dbb-link { background:none; border:none; padding:0; color:var(--accent); font-size:12.5px; cursor:pointer; text-decoration:none; }
+.dbb-link:hover { text-decoration:underline; }
+.dbb-link:disabled { color:var(--text-tertiary); cursor:default; }
+@media (max-width: 640px) { .dbb-row { grid-template-columns: 1fr auto auto; } .dbb-kind, .dbb-size { display:none; } }

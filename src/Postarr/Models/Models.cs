@@ -328,6 +328,9 @@ public class BackupSettings
 {
     public bool   BackupEnabled     { get; set; } = true;
     public string BackupDirectory   { get; set; } = string.Empty;  // defaults to ProgramData\Postarr\Backups
+    // Postarr's own database (chosen artwork, settings, collections): a daily copy in {data}/Backups/Database.
+    public bool   DatabaseBackupsEnabled { get; set; } = true;
+    public int    DatabaseBackupKeep     { get; set; } = 14;
 }
 
 public class AppSettings

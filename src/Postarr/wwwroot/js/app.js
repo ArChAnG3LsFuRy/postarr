@@ -2692,6 +2692,48 @@ async function renderSettings() {
   catch(e) { c.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`; }
 }
 
+// Settings → Backup → database backups list (download / restore).
+const DBB_KIND = k => k === 'daily' ? 'Daily' : k === 'manual' ? 'Manual' : k === 'before-restore' ? 'Before a restore'
+  : k.startsWith('before-') ? `Before updating to ${k.slice(7)}` : k;
+const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+async function loadDbBackups() {
+  const box = el('#dbb-list'); if (!box) return;
+  let d;
+  try { d = await api('/backups/database'); } catch (e) { box.innerHTML = `<div class="hi-desc">Couldn't list backups: ${esc(e.message)}</div>`; return; }
+  S.dbBackups = d;
+  box.innerHTML = d.items.length
+    ? d.items.map(b => `<div class="dbb-row">
+        <span class="dbb-when">${localTime(b.createdUtc)}</span><span class="dbb-kind">${esc(DBB_KIND(b.kind))}</span>
+        <span class="dbb-size">${fmtSize(b.sizeBytes)}</span>
+        <a class="dbb-link" href="/api/backups/database/${encodeURIComponent(b.name)}/download" download>Download</a>
+        <button type="button" class="dbb-link" data-dbb-restore="${esc(b.name)}" data-dbb-when="${esc(localTime(b.createdUtc))}">Restore</button>
+      </div>`).join('') + `<div class="hi-desc" style="margin-top:6px">Stored in ${esc(d.directory)}</div>`
+    : '<div class="hi-desc">No database backups yet — the first one is taken a couple of minutes after Postarr starts, or use Back up now.</div>';
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-dbb-restore]');
+  if (!b) return;
+  const restarts = S.dbBackups?.restartsItself;
+  if (!confirm(`Restore the database from ${b.dataset.dbbWhen}?
+
+Everything Postarr knows goes back to that moment: chosen posters, settings and collections. ` +
+               `Your current database is saved as a backup first, so you can undo this.
+
+Postarr restarts to apply it` +
+               (restarts ? ' — the page reconnects in a few seconds.' : ' — start it again afterwards (it isn’t running as a service).') +
+               `
+
+Nothing on your media server changes until you apply posters again.`)) return;
+  b.disabled = true; b.textContent = 'Restoring…';
+  try {
+    await api(`/backups/database/${encodeURIComponent(b.dataset.dbbRestore)}/restore`, { method: 'POST' });
+    toast('Restoring… Postarr is restarting.');
+    if (restarts) setTimeout(function wait() {
+      fetch('/api/auth/status').then(r => r.ok ? location.reload() : setTimeout(wait, 2000)).catch(() => setTimeout(wait, 2000));
+    }, 4000);
+  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Restore'; }
+});
+
 function ov(k) { return S.settings?.overlays?.[k] ? 'checked' : ''; }
 
 function settingsHtml(s) {
@@ -2907,6 +2949,18 @@ function settingsHtml(s) {
       </div>
       <div class="field-row" style="margin-top:10px"><label>Backup folder (leave blank for default)</label>
         <input type="text" id="set-backup-dir" value="${esc(s.backup?.backupDirectory??'')}" placeholder="leave blank for default" /></div>
+
+      <div class="dbb-head">Database backups</div>
+      <div class="section-desc">Postarr's own database holds every poster you've chosen, your settings and your collections. A copy is
+        taken every day and before each update, so a mistake (or a bad day for your media server) is never more than a restore away.</div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Back up the database every day</div></div>
+        <label class="switch"><input type="checkbox" id="set-dbbackup-enabled" ${s.backup?.databaseBackupsEnabled!==false?'checked':''}/><span class="switch-track"></span></label>
+      </div>
+      <div class="field-row" style="margin-top:10px"><label>Keep this many database backups</label>
+        <input type="number" id="set-dbbackup-keep" min="1" max="365" value="${s.backup?.databaseBackupKeep ?? 14}" /></div>
+      <div class="dbb-actions"><button type="button" class="btn-test" id="dbb-now">Back up now</button></div>
+      <div id="dbb-list" class="dbb-list"><div class="hi-desc">Loading…</div></div>
     </div>
 
     <div class="settings-section">
@@ -3008,6 +3062,13 @@ function instantUpdatesText(serverType) {
 }
 
 function wireSettings() {
+  loadDbBackups();
+  el('#dbb-now')?.addEventListener('click', async e => {
+    const b = e.target; b.disabled = true; b.textContent = 'Backing up…';
+    try { const r = await api('/backups/database', { method: 'POST' }); toast(`Database backed up (${r.name}).`); await loadDbBackups(); }
+    catch (err) { toast(err.message, true); }
+    finally { b.disabled = false; b.textContent = 'Back up now'; }
+  });
   els('[data-test]').forEach(b => b.addEventListener('click', () => testConn(b.dataset.test)));
   el('#set-server-type')?.addEventListener('change', e => {
     const v = e.target.value;
@@ -3550,6 +3611,8 @@ function collectSettings() {
       backup: {
         backupEnabled:   el('#set-backup-enabled')?.checked ?? true,
         backupDirectory: el('#set-backup-dir')?.value.trim() ?? '',
+        databaseBackupsEnabled: el('#set-dbbackup-enabled')?.checked ?? true,
+        databaseBackupKeep:     Math.min(365, Math.max(1, parseInt(el('#set-dbbackup-keep')?.value, 10) || 14)),
       },
       auth: {
         authEnabled:      el('#set-auth-enabled')?.checked      ?? false,

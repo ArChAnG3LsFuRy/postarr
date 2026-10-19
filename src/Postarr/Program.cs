@@ -42,6 +42,12 @@ static string ResolveServiceDataDir()
 
 Directory.CreateDirectory(dataDir);
 MigrateLegacyDatabase(dataDir);
+// A database restore chosen in Settings → Backup is applied here, before anything opens the database; then, on the
+// first start of a new version, the database is backed up before DatabaseInitialiser upgrades it.
+try { DatabaseBackupService.ApplyPendingRestore(dataDir); }
+catch (Exception ex) { Console.WriteLine($"[Postarr] Database restore failed ({ex.Message}); starting on the current database."); }
+var preUpgradeBackup = DatabaseBackupService.BackupBeforeUpgrade(dataDir);
+if (preUpgradeBackup != null) Console.WriteLine($"[Postarr] Database backed up before upgrade: {preUpgradeBackup}");
 Console.WriteLine($"[Postarr] Data directory: {dataDir}");
 Console.WriteLine($"[Postarr] Running as Windows Service: {isWindowsService}");
 
@@ -115,6 +121,9 @@ builder.Services.AddHostedService<EnrichmentRefreshService>();
 builder.Services.AddSingleton<RatingsRefreshService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RatingsRefreshService>());
 builder.Services.AddHostedService<ThumbnailWarmupService>();
+builder.Services.AddSingleton(sp => new DatabaseBackupService(dataDir,
+    sp.GetRequiredService<SettingsRepository>(), sp.GetRequiredService<IServiceScopeFactory>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseBackupService>());
 builder.Services.AddHostedService<Postarr.Jellyfin.JellyfinLiveUpdateService>();   // idles unless Jellyfin is active
 
 // "urls" picks up --urls and ASPNETCORE_URLS automatically; falls back to the default port.
