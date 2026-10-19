@@ -156,7 +156,7 @@ public class LibraryScanService
             // An empty listing is far more likely a server still starting up than every library deleted.
             return sections.Count == 0 ? null : sections.Select(s => s.Key).ToHashSet();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return null; }
     }
 
     public void CancelScan()
@@ -234,10 +234,13 @@ public class LibraryScanService
                     else if (isChanged) updatedCount++;
                     else if (skipped) skippedCount++;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                // A timed-out request (the server busy, e.g. right after its database was restored) is this item's error,
+                // not a cancellation: it used to stop the whole scan as "cancelled by user". Apply All retries the item.
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
                     errors++;
-                    await _log.LogAsync($"Error: {plexItem.Title}: {ex.Message}", "Error");
+                    var why = ex is OperationCanceledException ? $"{_clientFactory.MediaServerName} didn't respond in time" : ex.Message;
+                    await _log.LogAsync($"Error: {plexItem.Title}: {why}", "Error");
                 }
                 processed++;
                 await _notifier.ItemScannedAsync(plexItem.Title, "scanned", processed, allItems.Count);
@@ -282,7 +285,7 @@ public class LibraryScanService
                                         string.Join(", ", expired.Take(20).Select(o => o.Title)));
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 await _log.LogAsync($"Prune step failed (non-fatal): {ex.Message}", "Error");
             }
@@ -295,7 +298,7 @@ public class LibraryScanService
                     await _log.LogAsync($"{stale.Sum(s => s.Items)} item(s) belong to {stale.Count} librar{(stale.Count == 1 ? "y" : "ies")} " +
                                         $"no longer in {_clientFactory.MediaServerName} — kept for now; remove them from the Health page.", "Warning");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { /* informational only */ }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* informational only */ }
 
             // Scan collections
             foreach (var sec in sections)
@@ -320,9 +323,9 @@ public class LibraryScanService
 
             return "completed";
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await _log.LogAsync("Scan cancelled by user.", "Warning");
+            await _log.LogAsync("Scan cancelled.", "Warning");
             await _notifier.ScanCompletedAsync(0, 0, 0);
             return "cancelled";
         }
@@ -410,7 +413,7 @@ public class LibraryScanService
                     item.ServerAudienceScore  = d.AudienceScore;
                 }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { /* non-fatal */ }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* non-fatal */ }
     }
 
     /// <summary>
@@ -424,7 +427,7 @@ public class LibraryScanService
         if (client != null)
         {
             try { isGone = LiveGoneCheck(client, await client.GetLibrarySectionsAsync(ct), new(), ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { /* no re-add matching this time */ }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* no re-add matching this time */ }
         }
         await UpsertItemAsync(sec, item, incrementalMode: false, ct, isGone);
         await _log.LogAsync($"Live update: {item.Title}");
@@ -725,7 +728,7 @@ public class LibraryScanService
             foreach (var rs in reKeyedSeasons)
             {
                 try { await _applyService.ApplyCurrentSeasonPosterAsync(rs.Id, ct); }
-                catch (Exception ex) when (ex is not OperationCanceledException) { /* Apply All will retry */ }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* Apply All will retry */ }
             }
 
         // Auto-select season posters for new seasons or shows
@@ -787,7 +790,7 @@ public class LibraryScanService
             await _log.LogAsync($"Re-added in {server}: '{pick.Title}' (was {oldKey}, now {plexItem.RatingKey}) - kept its artwork choices and backups.");
             return (pick, posterLost, backgroundLost);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             await _log.LogAsync($"Couldn't check whether '{plexItem.Title}' was re-added: {ex.Message}", "Warning");
             return (null, false, false);
@@ -809,10 +812,15 @@ public class LibraryScanService
         if (backgroundLost) await MaybeAutoSelectBackgroundAsync(item.Id, "Re-added", ct);
         if (!_settings.Get().AutoApplyOnScan) return;   // otherwise it shows as "not applied" for Apply All
         try { if (!string.IsNullOrEmpty(item.CurrentPosterUrl))     await _applyService.ApplyCurrentPosterAsync(item.Id, force: true, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { await LogPushFailedAsync(item.Title, "poster", ex); }
         try { if (!string.IsNullOrEmpty(item.CurrentBackgroundUrl)) await _applyService.ApplyCurrentBackgroundAsync(item.Id, force: true, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { await LogPushFailedAsync(item.Title, "background", ex); }
     }
+
+    // The artwork stays chosen but marked "not applied", so Apply All (or the card's Apply) pushes it later.
+    private Task LogPushFailedAsync(string title, string what, Exception ex) =>
+        _log.LogAsync($"Couldn't push the {what} for '{title}' to {_clientFactory.MediaServerName}: " +
+                      (ex is OperationCanceledException ? "it didn't respond in time" : ex.Message) + " - Apply All will push it.", "Warning");
 
     // A new file / quality only changes the badges, so the chosen poster stays: it's re-rendered and re-pushed
     // (right away with auto-apply, otherwise via Apply All). Only an item with no poster yet gets an automatic pick.
@@ -831,7 +839,7 @@ public class LibraryScanService
         }
         if (!_settings.Get().AutoApplyOnScan) return;
         try { await _applyService.ApplyCurrentPosterAsync(item.Id, force: true, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { /* stays pending; Apply All will retry */ }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* stays pending; Apply All will retry */ }
     }
 
     // With auto-apply on, a poster whose NEW badge just appeared/expired is re-pushed immediately;
@@ -840,7 +848,7 @@ public class LibraryScanService
     {
         if (!_settings.Get().AutoApplyOnScan) return;
         try { await _applyService.ApplyCurrentPosterAsync(id, force: true, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { /* stays pending; Apply All will retry */ }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* stays pending; Apply All will retry */ }
     }
 
     private async Task MaybeAutoSelectSeasonPostersAsync(int libraryItemId, CancellationToken ct)
@@ -909,7 +917,7 @@ public class LibraryScanService
                 if (SeasonSetMatcher.MatchFor(all, anchor.Value.Poster, anchor.Value.Season, s.SeasonNumber) is { } p)
                     picks[s.Id] = p;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { /* non-fatal: these seasons get the usual pick */ }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { /* non-fatal: these seasons get the usual pick */ }
         return picks;
     }
 

@@ -83,7 +83,8 @@ builder.Services.AddControllers()
     });
 builder.Services.AddSignalR();
 
-builder.Services.AddHttpClient("plex",         c => { c.Timeout = TimeSpan.FromSeconds(30); c.DefaultRequestHeaders.UserAgent.ParseAdd("Postarr/1.0"); });
+// 60 s: uploading a poster to a busy Plex (scanning, or just restored) can take well over 30.
+builder.Services.AddHttpClient("plex",         c => { c.Timeout = TimeSpan.FromSeconds(60); c.DefaultRequestHeaders.UserAgent.ParseAdd("Postarr/1.0"); });
 builder.Services.AddHttpClient("jellyfin",     c => { c.Timeout = TimeSpan.FromSeconds(60); c.DefaultRequestHeaders.UserAgent.ParseAdd("Postarr/1.0"); })
     .ConfigurePrimaryHttpMessageHandler(Postarr.Jellyfin.JellyfinClient.CreateHandler);
 builder.Services.AddHttpClient("tmdb",         c => { c.Timeout = TimeSpan.FromSeconds(20); c.DefaultRequestHeaders.UserAgent.ParseAdd("Postarr/1.0"); });
