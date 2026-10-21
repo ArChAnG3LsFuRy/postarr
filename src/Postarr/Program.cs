@@ -149,11 +149,21 @@ app.Use(async (ctx, next) =>
     }
 });
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// The HTML pages must always be re-checked: they carry the ?v= version stamps for app.js / app.css, so a cached page
+// after an update would keep loading the old scripts. Scripts, styles and images can still be cached normally.
+var staticFiles = new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    },
+};
+app.UseStaticFiles(staticFiles);
 app.MapGet("/login", (IWebHostEnvironment env) =>
     Results.File(Path.Combine(env.WebRootPath, "login.html"), "text/html; charset=utf-8"));
 app.MapControllers();
 app.MapHub<ScanHub>("/scanhub");
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", staticFiles);
 
 app.Run();

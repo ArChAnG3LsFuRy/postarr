@@ -2672,7 +2672,16 @@ document.addEventListener('click', async e => {
   applyGridFilters();
   const card = el(sel);
   if (!card) { toast('That title isn’t in the grid any more — try a scan.', true); return; }
-  card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // Jump straight there (a smooth scroll across a 1,600-card grid stops short), then correct once more after the
+  // posters around it have loaded, in case anything above shifted.
+  const grid = card.closest('.poster-grid') || card.parentElement;
+  const centre = () => {
+    const offset = card.getBoundingClientRect().top - grid.getBoundingClientRect().top;
+    grid.scrollTop = Math.max(0, grid.scrollTop + offset - (grid.clientHeight - card.offsetHeight) / 2);
+    if (typeof _scrollMem !== 'undefined') _scrollMem[grid.id] = grid.scrollTop;
+  };
+  centre();
+  setTimeout(centre, 400);
   card.classList.remove('card-flash'); void card.offsetWidth; card.classList.add('card-flash');
   setTimeout(() => card.classList.remove('card-flash'), 2600);
 });
