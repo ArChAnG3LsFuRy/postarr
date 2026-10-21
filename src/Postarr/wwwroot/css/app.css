@@ -921,3 +921,7 @@ body.select-mode .bg-card .card-actions { pointer-events:none; opacity:0; }  /* 
 .dbb-link:hover { text-decoration:underline; }
 .dbb-link:disabled { color:var(--text-tertiary); cursor:default; }
 @media (max-width: 640px) { .dbb-row { grid-template-columns: 1fr auto auto; } .dbb-kind, .dbb-size { display:none; } }
+
+/* Health → jump to a title: the card it lands on pulses briefly */
+@keyframes card-flash { 0%,100% { box-shadow:0 0 0 0 transparent; } 20%,60% { box-shadow:0 0 0 4px var(--accent), 0 0 24px 4px var(--accent); } }
+.poster-card.card-flash { animation: card-flash 1.3s ease-in-out 2; position:relative; z-index:2; }

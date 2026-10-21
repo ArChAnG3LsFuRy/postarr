@@ -594,6 +594,12 @@ public class LibraryScanService
             return (false, false, true);
         }
 
+        // Did the server's match for this title change (e.g. "Fix Match" in Plex, or a title that arrived unmatched and
+        // has now been matched)? Then it may be a title Postarr already knows under an earlier record — see OnMatchChangedAsync.
+        bool matchChanged = !isNew && !adopted
+            && (NullIfEmpty(plexItem.TmdbId) ?? NullIfEmpty(plexItem.TvdbId)) != null
+            && (NullIfEmpty(plexItem.TmdbId) != NullIfEmpty(existing.TmdbId) || NullIfEmpty(plexItem.TvdbId) != NullIfEmpty(existing.TvdbId));
+
         existing.Title             = plexItem.Title;
         existing.Year              = plexItem.Year;
         existing.TmdbId            = plexItem.TmdbId;
@@ -724,6 +730,7 @@ public class LibraryScanService
             await OnQualityChangedAsync(existing, ct);
 
         if (adopted) await ReapplyCarriedOverAsync(existing, posterLost, backgroundLost, ct);
+        if (matchChanged) await OnMatchChangedAsync(existing.Id, ct);
         if (reKeyedSeasons.Count > 0 && _settings.Get().AutoApplyOnScan)
             foreach (var rs in reKeyedSeasons)
             {
@@ -794,6 +801,70 @@ public class LibraryScanService
         {
             await _log.LogAsync($"Couldn't check whether '{plexItem.Title}' was re-added: {ex.Message}", "Warning");
             return (null, false, false);
+        }
+    }
+
+    // ── A title whose match changed ────────────────────────────────────────────────────────────────────
+    // A title that reached Postarr without usable IDs (unmatched, or matched to the wrong thing — e.g. after the server's
+    // database was restored from an old backup) can't be recognised as one Postarr already knew, and gets no automatic
+    // poster. Once the server matches it properly ("Fix Match"), finish the job: if a hidden "missing" record has the
+    // same IDs, it's this title's earlier record — bring its artwork choices and backups over and drop it; otherwise,
+    // if the title still has no poster, pick one the usual way. A poster that's already chosen is never replaced.
+    private async Task OnMatchChangedAsync(int itemId, CancellationToken ct)
+    {
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.LibraryItems.Include(i => i.Seasons).FirstOrDefaultAsync(i => i.Id == itemId, ct);
+        if (item == null || !string.IsNullOrEmpty(item.CurrentPosterUrl)) return;
+
+        string? tmdb = NullIfEmpty(item.TmdbId), tvdb = NullIfEmpty(item.TvdbId), imdb = NullIfEmpty(item.ImdbId);
+        var server = _clientFactory.MediaServerName;
+        var earlier = await db.LibraryItems.IgnoreQueryFilters().Include(i => i.Seasons)
+            .Where(i => i.ServerType == server && i.MediaType == item.MediaType && i.Id != item.Id && i.MissingSinceUtc != null
+                        && ((tmdb != null && i.TmdbId == tmdb) || (tvdb != null && i.TvdbId == tvdb) || (imdb != null && i.ImdbId == imdb)))
+            .ToListAsync(ct);
+
+        if (earlier.Count != 1)
+        {
+            await MaybeAutoSelectPosterAsync(item.Id, "Match fixed", ct);
+            if (string.IsNullOrEmpty(item.CurrentBackgroundUrl)) await MaybeAutoSelectBackgroundAsync(item.Id, "Match fixed", ct);
+            await MaybeAutoSelectSeasonPostersAsync(item.Id, ct);
+            return;
+        }
+
+        var old = earlier[0];
+        _backup.MoveItemBackup(old.PlexRatingKey, item.PlexRatingKey);
+        if (IsReapplyable(old.CurrentPosterUrl, old.CurrentPosterSource))
+        { item.CurrentPosterUrl = old.CurrentPosterUrl; item.CurrentPosterSource = old.CurrentPosterSource; item.PosterAppliedToPlex = false; }
+        if (string.IsNullOrEmpty(item.CurrentBackgroundUrl) && IsReapplyable(old.CurrentBackgroundUrl, old.CurrentBackgroundSource))
+        { item.CurrentBackgroundUrl = old.CurrentBackgroundUrl; item.CurrentBackgroundSource = old.CurrentBackgroundSource; item.BackgroundAppliedToPlex = false; }
+        item.TextlessPreferred   = old.TextlessPreferred;
+        item.PosterDismissed     = item.PosterDismissed || old.PosterDismissed;
+        item.BackgroundDismissed = item.BackgroundDismissed || old.BackgroundDismissed;
+        if (old.AddedAtUtc.HasValue && (!item.AddedAtUtc.HasValue || old.AddedAtUtc < item.AddedAtUtc)) item.AddedAtUtc = old.AddedAtUtc;
+        var seasonsCopied = new List<SeasonItem>();
+        foreach (var s in item.Seasons.Where(s => string.IsNullOrEmpty(s.CurrentPosterUrl)))
+        {
+            var o = old.Seasons.FirstOrDefault(x => x.SeasonNumber == s.SeasonNumber);
+            if (o == null || !IsReapplyable(o.CurrentPosterUrl, o.CurrentPosterSource)) continue;
+            _backup.MoveItemBackup(o.PlexRatingKey, s.PlexRatingKey);
+            s.CurrentPosterUrl = o.CurrentPosterUrl; s.CurrentPosterSource = o.CurrentPosterSource; s.TextlessPreferred = o.TextlessPreferred;
+            seasonsCopied.Add(s);
+        }
+        db.LibraryItems.Remove(old);   // its seasons cascade
+        await db.SaveChangesAsync(ct);
+        await _log.LogAsync($"{server} now matches '{item.Title}' - restored its artwork choices from its earlier record.");
+
+        if (string.IsNullOrEmpty(item.CurrentPosterUrl)) await MaybeAutoSelectPosterAsync(item.Id, "Match fixed", ct);
+        if (string.IsNullOrEmpty(item.CurrentBackgroundUrl)) await MaybeAutoSelectBackgroundAsync(item.Id, "Match fixed", ct);
+        if (!_settings.Get().AutoApplyOnScan) return;   // otherwise it shows as "not applied" for Apply All
+        try { if (!string.IsNullOrEmpty(item.CurrentPosterUrl) && !item.PosterAppliedToPlex) await _applyService.ApplyCurrentPosterAsync(item.Id, force: true, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { await LogPushFailedAsync(item.Title, "poster", ex); }
+        try { if (!string.IsNullOrEmpty(item.CurrentBackgroundUrl) && !item.BackgroundAppliedToPlex) await _applyService.ApplyCurrentBackgroundAsync(item.Id, force: true, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { await LogPushFailedAsync(item.Title, "background", ex); }
+        foreach (var s in seasonsCopied)
+        {
+            try { await _applyService.ApplyCurrentSeasonPosterAsync(s.Id, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { await LogPushFailedAsync($"{item.Title} – {s.Title}", "season poster", ex); }
         }
     }
 

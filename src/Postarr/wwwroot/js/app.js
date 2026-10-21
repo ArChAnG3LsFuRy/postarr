@@ -2654,13 +2654,27 @@ Its ${n} item(s), their chosen posters and stored original-poster backups are re
   }
 });
 
-// Jump from a Health list item straight to its grid, filtered so it's easy to find.
-document.addEventListener('click', e => {
+// Jump from a Health list item straight to that title's card: open its grid with no filter or search hiding it,
+// scroll the card into the middle of the view and flash it.
+document.addEventListener('click', async e => {
   const goto = e.target.closest('[data-health-goto]');
   if (!goto) return;
   const view = goto.dataset.healthGoto === 'movie' ? 'movies' : 'shows';
+  const id   = goto.dataset.healthId;
   setView(view);
-  // Drop a title filter so the grid narrows to roughly what they clicked.
+  const box = el('#filter-box'), search = el('#search-box');
+  if (box) box.value = 'all';
+  if (search) search.value = '';
+  const sel = `#view-${view} .poster-card[data-id="${id}"]`;
+  // The grid may still be loading (or re-rendering) — wait for the card, then let the render settle.
+  for (let i = 0; i < 100 && !el(sel); i++) await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 150));
+  applyGridFilters();
+  const card = el(sel);
+  if (!card) { toast('That title isn’t in the grid any more — try a scan.', true); return; }
+  card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  card.classList.remove('card-flash'); void card.offsetWidth; card.classList.add('card-flash');
+  setTimeout(() => card.classList.remove('card-flash'), 2600);
 });
 
 async function renderActivity() {
