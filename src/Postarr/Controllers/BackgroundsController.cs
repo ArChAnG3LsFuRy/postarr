@@ -36,18 +36,20 @@ public class BackgroundsController : ControllerBase
     public record ApplyRequest(string ImageUrl, PosterSource Source);
 
     [HttpPost("upload/item/{id}")]
+    [RequestSizeLimit(ImageGuard.MaxUploadBytes + 1024 * 1024)]
     public async Task<ActionResult> UploadCustomBackground(int id, IFormFile file)
     {
         if (file == null || file.Length == 0) return BadRequest(new { error = "No file provided." });
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
-        var bytes = ms.ToArray();
+        var bytes = ImageGuard.NormaliseUpload(ms.ToArray(), out var why);
+        if (bytes == null) return BadRequest(new { error = why });
         using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.LibraryItems.FindAsync(id);
         if (item == null) return NotFound();
         var plex = _clientFactory.BuildMediaServerClient();
         if (plex == null) return BadRequest(new { error = $"{_clientFactory.MediaServerName} not configured." });
-        await plex.UploadBackgroundAsync(item.PlexRatingKey, bytes, file.ContentType);
+        await plex.UploadBackgroundAsync(item.PlexRatingKey, bytes, "image/jpeg");
         // Store a displayable URL for the art Plex now has selected ("custom" rendered as "Load failed").
         item.CurrentBackgroundUrl    = await _applyService.ResolveUploadedArtUrlAsync(item.PlexRatingKey, true) ?? "custom";
         item.CurrentBackgroundSource = "Local";

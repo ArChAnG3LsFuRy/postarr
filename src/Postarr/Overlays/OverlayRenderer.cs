@@ -25,6 +25,7 @@ public class OverlayRenderer
     /// which would otherwise print "NEW SEASON" on every season of the show.</param>
     public byte[] ApplyOverlays(byte[] sourceBytes, LibraryItem item, OverlaySettings s, bool isSeason = false)
     {
+        if (!Services.ImageGuard.IsSafe(sourceBytes, out var why)) throw new InvalidOperationException(why);
         using var decoded = SKBitmap.Decode(sourceBytes)
             ?? throw new InvalidOperationException("Cannot decode source image.");
         using var bmp = NormaliseToPosterAspect(decoded);

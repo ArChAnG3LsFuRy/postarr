@@ -66,9 +66,7 @@ public class SettingsController : ControllerBase
             using var reader = new System.IO.StreamReader(Request.Body);
             var rawJson = await reader.ReadToEndAsync();
 
-            // Log exactly what arrived so we can diagnose mismatches
-            Console.WriteLine($"[Settings.Save] body length={rawJson.Length}");
-            Console.WriteLine($"[Settings.Save] body={rawJson[..Math.Min(500, rawJson.Length)]}");
+            // (The body is never logged: it can hold a new password, the media server token and API keys.)
 
             if (string.IsNullOrWhiteSpace(rawJson))
                 return new JsonResult(new { error = "Empty request body." }) { StatusCode = 400 };
@@ -126,6 +124,21 @@ public class SettingsController : ControllerBase
                 if (settingsEl.TryGetProperty("themeAccent",           out var ta2)) s.ThemeAccent         = ta2.GetString() ?? s.ThemeAccent;
             }
 
+            // A saved token/key is only ever sent to the server it was entered for. Pointing Postarr at a different
+            // address while keeping the hidden saved token would hand that token to whoever runs the new address, so a
+            // new address needs the token typed in again.
+            foreach (var (name, newUrl, oldUrl, newKey, oldKey) in new[]
+            {
+                ("Plex",     s.PlexBaseUrl,     existing.PlexBaseUrl,     s.PlexToken,      existing.PlexToken),
+                ("Jellyfin", s.JellyfinBaseUrl, existing.JellyfinBaseUrl, s.JellyfinApiKey, existing.JellyfinApiKey),
+                ("Emby",     s.EmbyBaseUrl,     existing.EmbyBaseUrl,     s.EmbyApiKey,     existing.EmbyApiKey),
+            })
+            {
+                var keepsSavedKey = string.IsNullOrEmpty(newKey) || newKey == Mask;
+                if (keepsSavedKey && !string.IsNullOrEmpty(oldKey) && !SameServer(newUrl, oldUrl))
+                    return new JsonResult(new { error = $"You changed the {name} address — type the {name} {(name == "Plex" ? "token" : "API key")} again, so your saved one isn't sent to a different server." }) { StatusCode = 400 };
+            }
+
             if (string.IsNullOrEmpty(s.PlexToken)    || s.PlexToken    == Mask) s.PlexToken    = existing.PlexToken;
             if (string.IsNullOrEmpty(s.JellyfinApiKey) || s.JellyfinApiKey == Mask) s.JellyfinApiKey = existing.JellyfinApiKey;
             if (string.IsNullOrEmpty(s.EmbyApiKey)     || s.EmbyApiKey     == Mask) s.EmbyApiKey     = existing.EmbyApiKey;
@@ -147,6 +160,26 @@ public class SettingsController : ControllerBase
                 return new JsonResult(new { error = "Use a password of at least 8 characters." }) { StatusCode = 400 };
 
             s.Auth         ??= existing.Auth     ?? new AuthSettings();
+
+            // Changing the password or username, or switching the login off, needs the current password — a stolen
+            // session (or anything running in the page) must not be able to lock the owner out or open Postarr up.
+            var exAuth = existing.Auth ?? new AuthSettings();
+            var loginChange = !string.IsNullOrWhiteSpace(newPassword)
+                              || (exAuth.AuthEnabled && !s.Auth.AuthEnabled)
+                              || !string.Equals((s.Auth.Username ?? "").Trim(), exAuth.Username ?? "", StringComparison.Ordinal);
+            if (loginChange && !string.IsNullOrEmpty(exAuth.PasswordHash))
+            {
+                var client = AuthService.ClientKey(HttpContext);
+                var wait = _auth.LockedSeconds(client);
+                if (wait > 0) return new JsonResult(new { error = $"Too many wrong passwords. Try again in {(wait + 59) / 60} minute(s)." }) { StatusCode = 429 };
+                var current = doc.RootElement.TryGetProperty("currentPassword", out var cp) && cp.ValueKind == JsonValueKind.String ? cp.GetString() : null;
+                if (string.IsNullOrEmpty(current) || !_auth.ValidatePassword(current))
+                {
+                    if (!string.IsNullOrEmpty(current)) _auth.RecordFailure(client);
+                    return new JsonResult(new { error = "Enter your current password to change the login settings.", needsCurrentPassword = true }) { StatusCode = 403 };
+                }
+                _auth.RecordSuccess(client);
+            }
             s.Overlays     ??= existing.Overlays ?? new OverlaySettings();
             s.Backup       ??= existing.Backup   ?? new BackupSettings();
 
@@ -209,6 +242,23 @@ public class SettingsController : ControllerBase
     private string Resolve(string? submitted, string saved) =>
         string.IsNullOrWhiteSpace(submitted) || submitted == Mask ? saved : submitted;
 
+    // Same scheme, host and port: the saved token may be used. (Trailing slashes and letter case don't matter.)
+    private static bool SameServer(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return string.IsNullOrWhiteSpace(a) == string.IsNullOrWhiteSpace(b);
+        if (!Uri.TryCreate(a.Trim(), UriKind.Absolute, out var x) || !Uri.TryCreate(b.Trim(), UriKind.Absolute, out var y)) return false;
+        return x.Scheme.Equals(y.Scheme, StringComparison.OrdinalIgnoreCase) && x.Host.Equals(y.Host, StringComparison.OrdinalIgnoreCase) && x.Port == y.Port;
+    }
+
+    // "Test" with a different address than the saved one: only with a token typed in for it, never the saved one.
+    private IActionResult? RefuseSavedKeyElsewhere(string? submittedKey, string? submittedUrl, string savedUrl, string savedKey, string what)
+    {
+        var keepsSaved = string.IsNullOrWhiteSpace(submittedKey) || submittedKey == Mask;
+        if (keepsSaved && !string.IsNullOrEmpty(savedKey) && !string.IsNullOrWhiteSpace(submittedUrl) && !SameServer(submittedUrl, savedUrl))
+            return new JsonResult(new { success = false, error = $"Type the {what} to test a different address." }, _jsonOpts);
+        return null;
+    }
+
     private async Task<(string? value, string? value2)> ReadTestBody()
     {
         using var reader = new System.IO.StreamReader(Request.Body);
@@ -225,6 +275,7 @@ public class SettingsController : ControllerBase
     {
         var (value, value2) = await ReadTestBody();
         var s      = _repo.Get();
+        if (RefuseSavedKeyElsewhere(value, value2, s.PlexBaseUrl, s.PlexToken, "Plex token") is { } refused) return refused;
         var url    = Resolve(value2, s.PlexBaseUrl);
         var token  = Resolve(value,  s.PlexToken);
         var client = new Plex.PlexClient(new HttpClient(), url, token);
@@ -236,6 +287,7 @@ public class SettingsController : ControllerBase
     {
         var (value, value2) = await ReadTestBody();
         var s      = _repo.Get();
+        if (RefuseSavedKeyElsewhere(value, value2, s.JellyfinBaseUrl, s.JellyfinApiKey, "Jellyfin API key") is { } refused) return refused;
         var url    = Resolve(value2, s.JellyfinBaseUrl);
         var key    = Resolve(value,  s.JellyfinApiKey);
         var client = new Jellyfin.JellyfinClient(new HttpClient(Jellyfin.JellyfinClient.CreateHandler()), url, key);
@@ -247,6 +299,7 @@ public class SettingsController : ControllerBase
     {
         var (value, value2) = await ReadTestBody();
         var s      = _repo.Get();
+        if (RefuseSavedKeyElsewhere(value, value2, s.EmbyBaseUrl, s.EmbyApiKey, "Emby API key") is { } refused) return refused;
         var url    = Resolve(value2, s.EmbyBaseUrl);
         var key    = Resolve(value,  s.EmbyApiKey);
         var client = new Jellyfin.JellyfinClient(new HttpClient(Jellyfin.JellyfinClient.CreateHandler()), url, key, emby: true);

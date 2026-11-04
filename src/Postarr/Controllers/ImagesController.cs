@@ -27,6 +27,8 @@ public class ImagesController : ControllerBase
         if (plex == null) return NotFound();
         var img = await plex.FetchImageAsync(path, ct);
         if (img == null) return NotFound();
+        // Raster images only: an SVG or HTML answer would otherwise run as a page on Postarr's own address.
+        if (!RasterTypes.Contains(img.Value.ContentType.Split(';')[0].Trim().ToLowerInvariant())) return StatusCode(415);
         Response.Headers.CacheControl = "public, max-age=86400";
         return File(img.Value.Bytes, img.Value.ContentType);
     }
@@ -53,9 +55,16 @@ public class ImagesController : ControllerBase
         return PhysicalFile(path, "image/jpeg");
     }
 
+    private static readonly HashSet<string> RasterTypes = new() { "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/bmp", "image/avif" };
+
+    // A path on this site: one leading "/", then no second slash or backslash, and no whitespace or control characters
+    // anywhere (browsers drop tabs and newlines, so "/<tab>/evil.example" would become "//evil.example").
+    private static readonly System.Text.RegularExpressions.Regex SameSitePath =
+        new("^/(?![/\\\\])[^\\s\\\\\\x00-\\x1f]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private IActionResult SafeRedirect(string url)
     {
-        var sameSite = url.StartsWith('/') && !url.StartsWith("//") && !url.StartsWith("/\\");
+        var sameSite = SameSitePath.IsMatch(url);
         return sameSite || _cache.IsAllowed(url) || Services.KometaImageCache.IsKometaUrl(url) ? Redirect(url) : NotFound();
     }
 }

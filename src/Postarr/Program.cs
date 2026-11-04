@@ -42,6 +42,7 @@ static string ResolveServiceDataDir()
 
 Directory.CreateDirectory(dataDir);
 MigrateLegacyDatabase(dataDir);
+Postarr.Auth.AuthService.DataDir = dataDir;   // session signing key + signed-out sessions live here
 // A database restore chosen in Settings → Backup is applied here, before anything opens the database; then, on the
 // first start of a new version, the database is backed up before DatabaseInitialiser upgrades it.
 try { DatabaseBackupService.ApplyPendingRestore(dataDir); }

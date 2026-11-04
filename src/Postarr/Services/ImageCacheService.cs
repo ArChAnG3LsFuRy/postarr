@@ -54,6 +54,7 @@ public class ImageCacheService
         try
         {
             var bytes = await _http.CreateClient("imagedownload").GetByteArrayAsync(url, ct);
+            if (!ImageGuard.IsSafe(bytes, out _)) return null;   // not an image, or a decompression bomb
             using var src = SKBitmap.Decode(bytes);
             if (src == null || src.Width == 0) return null;
 

@@ -75,6 +75,7 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     public IActionResult Logout()
     {
+        _auth.Revoke(Request.Cookies["postarr_session"]);   // a copied cookie stops working too
         Response.Cookies.Delete("postarr_session");
         return Ok();
     }

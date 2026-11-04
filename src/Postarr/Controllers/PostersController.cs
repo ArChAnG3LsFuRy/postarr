@@ -106,10 +106,10 @@ public class PostersController : ControllerBase
     // ── Custom poster upload (file upload → apply directly to Plex) ──────────
 
     [HttpPost("upload/item/{id}")]
+    [RequestSizeLimit(ImageGuard.MaxUploadBytes + 1024 * 1024)]
     public async Task<ActionResult> UploadCustomPoster(int id, IFormFile file)
     {
         if (file == null || file.Length == 0) return BadRequest(new { error = "No file provided." });
-        if (!file.ContentType.StartsWith("image/")) return BadRequest(new { error = "File must be an image." });
 
         using var db   = await _dbFactory.CreateDbContextAsync();
         var item       = await db.LibraryItems.FindAsync(id);
@@ -117,7 +117,8 @@ public class PostersController : ControllerBase
 
         using var ms   = new MemoryStream();
         await file.CopyToAsync(ms);
-        var bytes      = ms.ToArray();
+        var bytes      = ImageGuard.NormaliseUpload(ms.ToArray(), out var why);
+        if (bytes == null) return BadRequest(new { error = why });
 
         // Apply custom upload directly to Plex with overlays rendered on top
         var result = await _applyService.ApplyPosterAsync(id, null, PosterSource.Local, "Custom upload", bytes: bytes);
@@ -125,16 +126,18 @@ public class PostersController : ControllerBase
     }
 
     [HttpPost("upload/season/{seasonId}")]
+    [RequestSizeLimit(ImageGuard.MaxUploadBytes + 1024 * 1024)]
     public async Task<ActionResult> UploadCustomSeasonPoster(int seasonId, IFormFile file)
     {
         if (file == null || file.Length == 0) return BadRequest(new { error = "No file provided." });
-        if (!file.ContentType.StartsWith("image/")) return BadRequest(new { error = "File must be an image." });
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
+        var bytes = ImageGuard.NormaliseUpload(ms.ToArray(), out var why);
+        if (bytes == null) return BadRequest(new { error = why });
         // Same path as a picked season poster (overlays honour the season-overlay setting).
         var result = await _applyService.ApplySeasonPosterAsync(
-            seasonId, null, PosterSource.Local, "Custom upload", bytes: ms.ToArray());
+            seasonId, null, PosterSource.Local, "Custom upload", bytes: bytes);
         return Ok(new { status = result });
     }
 

@@ -133,10 +133,10 @@ public class CollectionsController : ControllerBase
     }
 
     [HttpPost("upload/{id}")]
+    [RequestSizeLimit(ImageGuard.MaxUploadBytes + 1024 * 1024)]
     public async Task<ActionResult> UploadCustomPoster(int id, IFormFile file)
     {
         if (file == null || file.Length == 0) return BadRequest(new { error = "No file provided." });
-        if (!file.ContentType.StartsWith("image/")) return BadRequest(new { error = "File must be an image." });
 
         using var db = await _dbFactory.CreateDbContextAsync();
         var col      = await db.Collections.FindAsync(id);
@@ -147,8 +147,10 @@ public class CollectionsController : ControllerBase
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
+        var bytes = ImageGuard.NormaliseUpload(ms.ToArray(), out var why);
+        if (bytes == null) return BadRequest(new { error = why });
         // Collection posters push as-is — no overlay badges, same as picking one.
-        await plex.UploadPosterAsync(col.PlexRatingKey, ms.ToArray(), file.ContentType);
+        await plex.UploadPosterAsync(col.PlexRatingKey, bytes, "image/jpeg");
 
         // Store the proxy URL of the poster Plex now has selected, so the card can display it
         // (storing "custom" rendered as "Load failed").

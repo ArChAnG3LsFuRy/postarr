@@ -12,7 +12,10 @@ const S = {
 
 const el  = sel => document.querySelector(sel);
 const els = sel => Array.from(document.querySelectorAll(sel));
-const esc = str => { const d = document.createElement('div'); d.textContent = str ?? ''; return d.innerHTML; };
+// Escapes for HTML text AND attribute values: quotes too, or a title/name containing " could break out of an
+// attribute (title="…", alt="…", value="…") and add its own event handler — script running inside Postarr.
+const esc = str => String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // ── Theme (logo-derived colours) ────────────────────────────────────────────────
 // Two settings-driven colours recolour the whole UI (via the --accent/--coral tokens) AND the
@@ -3023,6 +3026,8 @@ function settingsHtml(s) {
         <input type="text" id="set-auth-username" value="${esc(s.auth?.username??'admin')}" /></div>
       <div class="field-row"><label>New password (leave blank to keep current)</label>
         <input type="password" id="set-auth-password" placeholder="Enter new password…" autocomplete="new-password" /></div>
+      <div class="field-row"><label>Current password <small>(needed to change the password or username, or to turn login off)</small></label>
+        <input type="password" id="set-auth-current" placeholder="Your current password" autocomplete="current-password" /></div>
       <div class="field-row"><label>Session length (days)</label>
         <input type="number" id="set-auth-days" min="1" max="365" value="${s.auth?.sessionDaysValid??30}" /></div>
     </div>
@@ -3575,7 +3580,7 @@ async function testConn(provider) {
       : provider === 'trakt'  ? { value: el('#set-trakt')?.value   ?? '', value2: null }
       :                         { value: el('#set-tvdb')?.value   ?? '', value2: null };
     const res = await api(`/settings/test/${provider}`, { method: 'POST', body: JSON.stringify(body) });
-    r.textContent = res?.success ? 'Connected ✓' : 'Could not connect ✗';
+    r.textContent = res?.success ? 'Connected ✓' : (res?.error ? res.error : 'Could not connect ✗');
     r.classList.add(res?.success ? 'ok' : 'fail');
   } catch(e) { r.textContent = `Error: ${e.message}`; r.classList.add('fail'); }
 }
@@ -3645,6 +3650,7 @@ function collectSettings() {
       },
     },
     newPassword: el('#set-auth-password')?.value || null,
+    currentPassword: el('#set-auth-current')?.value || null,
   };
 }
 
@@ -3652,6 +3658,7 @@ async function saveSettings() {
   try {
     const payload = collectSettings();
     const res = await api('/settings', { method: 'POST', body: JSON.stringify(payload) });
+    ['#set-auth-password', '#set-auth-current'].forEach(id => { const f = el(id); if (f) f.value = ''; });
     toast(res?.ratingsFetchStarted
       ? 'Settings saved. Fetching ratings & awards in the background — watch Activity, then use Apply All.'
       : 'Settings saved.');
