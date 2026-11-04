@@ -151,7 +151,7 @@ hub?.on('ScanStarted', ({ totalItems }) => {
   el('#scan-progress-fill').style.width = '0%';
   el('#scan-progress-text').textContent = `0 / ${totalItems}`;
   el('#scan-status').textContent = 'Scanning…';
-  el('#scan-btn').disabled = true;
+  setScanButtonsDisabled(true);
   el('#live-dot').hidden = false;
 });
 
@@ -164,7 +164,7 @@ hub?.on('ItemScanned', ({ processed, total, title }) => {
 hub?.on('ScanCompleted', ({ newItems, updatedItems, errors }) => {
   el('#scan-progress-fill').style.width = '100%';
   el('#scan-status').textContent = 'Idle';
-  el('#scan-btn').disabled = false;
+  setScanButtonsDisabled(false);
   el('#live-dot').hidden = true;
   setTimeout(() => { el('#scan-progress-wrap').hidden = true; }, 3000);
   toast(`Scan complete — ${newItems} new, ${updatedItems} updated${errors ? ', ' + errors + ' errors' : ''}.`);
@@ -186,7 +186,7 @@ async function syncScanState() {
   try {
     const s = await api('/library/scan/status');
     const scanning = !!s?.isScanning;
-    el('#scan-btn').disabled = scanning;
+    setScanButtonsDisabled(scanning);
     el('#live-dot').hidden = !scanning;
     if (scanning) {
       el('#scan-progress-wrap').hidden = false;
@@ -1951,15 +1951,20 @@ el('#apply-all-btn').addEventListener('click', async () => {
 });
 
 // ── Scan & Cancel ─────────────────────────────────────────────────────────────
-el('#scan-btn').addEventListener('click', async () => {
+// Both scan buttons are off while any scan runs.
+function setScanButtonsDisabled(on) { els('#scan-btn, #quick-scan-btn').forEach(b => { b.disabled = on; }); }
+
+async function startScan(quick) {
   try {
-    const r = await api('/library/scan', { method: 'POST' });
+    const r = await api(`/library/scan${quick ? '?mode=quick' : ''}`, { method: 'POST' });
     toast(r?.status === 'already-running'
       ? 'A scan is already in progress — watch the progress bar below.'
-      : 'Scan started.');
+      : quick ? 'Quick scan started — new and changed titles only.' : 'Scan started.');
   }
   catch(e) { toast(`Could not start scan: ${e.message}`, true); }
-});
+}
+el('#scan-btn').addEventListener('click', () => startScan(false));
+el('#quick-scan-btn').addEventListener('click', () => startScan(true));
 
 el('#cancel-scan-btn').addEventListener('click', async () => {
   try { await api('/library/scan/cancel', { method: 'POST' }); toast('Cancelling scan…'); }
@@ -3702,7 +3707,7 @@ el('#sel-clear').addEventListener('click', () => setSelectMode(true)); // re-ent
       el('#scan-progress-text').textContent = 'Scan in progress…';
       el('#scan-progress-fill').style.width = '50%';
       el('#scan-status').textContent = 'Scanning…';
-      el('#scan-btn').disabled = true;
+      setScanButtonsDisabled(true);
       el('#live-dot').hidden = false;
     }
   } catch { /* non-fatal */ }

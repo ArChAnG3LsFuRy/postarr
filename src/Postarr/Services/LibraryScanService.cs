@@ -167,7 +167,9 @@ public class LibraryScanService
     // forceFull=true ignores the "Incremental scan only" setting and re-enriches/re-searches every
     // item. The manual "Scan Library" button passes this so a user-triggered scan is always a real
     // full scan; only the automatic scheduled scan honours the incremental setting (to stay cheap).
-    public async Task<string> RunFullScanAsync(bool forceFull = false, CancellationToken externalCt = default)
+    // quick=true is the "Quick scan" button: only new and changed titles, whatever the scheduled-scan setting says —
+    // once a full scan has completed (incremental mode needs that baseline; before it, a quick scan is a full one).
+    public async Task<string> RunFullScanAsync(bool forceFull = false, CancellationToken externalCt = default, bool quick = false)
     {
         lock (_scanLock)
         {
@@ -192,7 +194,7 @@ public class LibraryScanService
             }
 
             var settings = _settings.Get();
-            var incrementalMode = !forceFull && settings.IncrementalScanOnly && settings.LastFullScanCompletedUtc.HasValue;
+            var incrementalMode = settings.LastFullScanCompletedUtc.HasValue && (quick || (!forceFull && settings.IncrementalScanOnly));
 
             var sections = await plex.GetLibrarySectionsAsync(ct);
 

@@ -64,6 +64,9 @@ html, body { margin:0; padding:0; background:var(--bg-base); color:var(--text-pr
 .btn-scan { display:flex; align-items:center; justify-content:center; gap:8px; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:var(--radius-sm); padding:10px; font-weight:700; font-size:13px; cursor:pointer; }
 .btn-scan:hover { background:var(--accent); color:var(--accent-text); }
 .btn-scan:hover { filter:brightness(1.08); }
+.btn-scan-quick { background:transparent; border:none; color:var(--text-secondary); font-size:12px; padding:2px 0 0; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.btn-scan-quick:hover { color:var(--accent); }
+.btn-scan-quick:disabled { opacity:.45; cursor:default; text-decoration:none; }
 .btn-scan:disabled { opacity:0.6; cursor:default; }
 .scan-status { text-align:center; font-size:12px; color:var(--text-tertiary); font-family:var(--font-mono); }
 .scan-progress-wrap { display:flex; flex-direction:column; gap:5px; }

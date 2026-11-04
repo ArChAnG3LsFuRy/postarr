@@ -65,7 +65,7 @@ public class LibraryController : ControllerBase
     public ActionResult ScanStatus() => Ok(new { isScanning = _scanService.IsScanning });
 
     [HttpPost("scan")]
-    public ActionResult TriggerScan()
+    public ActionResult TriggerScan([FromQuery] string? mode = null)
     {
         // Tell the client the truth: if a scan is already running (e.g. the one that auto-starts
         // on boot), clicking Scan is a no-op — previously it still returned "scan-started", so the
@@ -74,11 +74,12 @@ public class LibraryController : ControllerBase
         if (_scanService.IsScanning)
             return Ok(new { status = "already-running" });
 
-        // The manual button is always a real full scan (re-enrich + re-search every item), even when
-        // "Incremental scan only" is ticked for the background scheduled scans.
+        // "Scan Library" is always a real full scan (re-enrich + re-search every item), even when "Incremental scan
+        // only" is ticked for the scheduled scans. "Quick scan" (?mode=quick) only looks at new and changed titles.
+        var quick = string.Equals(mode, "quick", StringComparison.OrdinalIgnoreCase);
         _ = Task.Run(async () =>
         {
-            try { await _scanService.RunFullScanAsync(forceFull: true); }
+            try { await _scanService.RunFullScanAsync(forceFull: !quick, quick: quick); }
             catch (Exception ex) { Console.WriteLine($"[Scan] Unhandled scan failure: {ex}"); }
         });
         return Accepted(new { status = "scan-started" });
