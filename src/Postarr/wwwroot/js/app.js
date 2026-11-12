@@ -1659,6 +1659,32 @@ async function loadCandidates(item, scope, kind, seasonId = null) {
   } catch(e) { grid.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`; }
 }
 
+// The web page a picker choice comes from, for the ↗ link on its card: the title's posters/backgrounds page on TMDB,
+// its page on FanArt.tv or TheTVDB. None for the server's own images, uploads or Postarr-drawn posters.
+function candidateSourcePage(c, kind) {
+  const it = S.modal?.item; if (!it) return null;
+  const isCol    = kind === 'collection';
+  const isShow   = !isCol && it.mediaType === 1;
+  const season   = S.modal.pickerMode === 'season' ? S.modal.seasonId : null;
+  const tmdb = encodeURIComponent(it.tmdbId || ''), tvdb = encodeURIComponent(it.tvdbId || '');
+  const what = kind === 'background' ? 'backdrops' : 'posters';
+  switch (c.source) {
+    case 0:  // TMDB
+      if (!tmdb) return null;
+      if (isCol) return `https://www.themoviedb.org/collection/${tmdb}/images/posters`;
+      if (isShow && season != null) return `https://www.themoviedb.org/tv/${tmdb}/season/${encodeURIComponent(season)}/images/posters`;
+      return `https://www.themoviedb.org/${isShow ? 'tv' : 'movie'}/${tmdb}/images/${what}`;
+    case 1:  // FanArt.tv: movies by TMDB id, shows by TVDB id
+      if (isCol) return null;
+      if (isShow) return tvdb ? `https://fanart.tv/series/${tvdb}/` : null;
+      return tmdb ? `https://fanart.tv/movie/${tmdb}/` : null;
+    case 2:  // TheTVDB
+      if (isCol || !tvdb) return null;
+      return `https://thetvdb.com/dereferrer/${isShow ? 'series' : 'movie'}/${tvdb}`;
+  }
+  return null;
+}
+
 function renderCandidateGrid(kind) {
   const grid = el('#modal-grid');
   const textlessOnly = el('#modal-textless-only').checked && kind !== 'background';
@@ -1669,12 +1695,16 @@ function renderCandidateGrid(kind) {
       <div class="candidate-card-inner">
         <img src="${esc(c.thumbnailUrl || c.imageUrl)}" loading="lazy" />
         <span class="candidate-tag">${sourceLabel(c.source)}</span>
+        ${(u => u ? `<a class="candidate-src" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Open this on ${esc(sourceLabel(c.source))}">↗</a>` : '')(candidateSourcePage(c, kind))}
         ${c.isTextless ? '<span class="textless-flag">No text</span>' : ''}
         ${c.setMatches ? `<span class="set-flag" title="Part of a FanArt.tv set: it has matching posters for ${c.setMatches} of this show's ${c.setOtherSeasons} other season${c.setOtherSeasons === 1 ? '' : 's'}. Tick “Match the other seasons” to apply them all.">Set · ${c.setMatches + 1}/${c.setOtherSeasons + 1}</span>` : ''}
       </div>
     </div>`).join('') +
     `<div class="modal-drop-hint">📁 Drag & drop your own image here, or use the "Custom poster" button above</div>`;
-  els('.candidate-card').forEach(card => card.addEventListener('click', () => applyCandidate(candidates[+card.dataset.idx])));
+  els('.candidate-card').forEach(card => card.addEventListener('click', e => {
+    if (e.target.closest('.candidate-src')) return;   // the ↗ link opens the source page; it doesn't pick the poster
+    applyCandidate(candidates[+card.dataset.idx]);
+  }));
 }
 
 async function applyCandidate(c) {
