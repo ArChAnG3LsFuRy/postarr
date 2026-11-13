@@ -14,6 +14,7 @@ public class PostarrDbContext : DbContext
     public DbSet<ActivityLogEntry>ActivityLog    => Set<ActivityLogEntry>();
     public DbSet<SettingsRecord>  Settings       => Set<SettingsRecord>();
     public DbSet<ManagedCollection> ManagedCollections => Set<ManagedCollection>();
+    public DbSet<ArtworkHistoryEntry> ArtworkHistory => Set<ArtworkHistoryEntry>();
 
     protected override void OnModelCreating(ModelBuilder m)
     {
@@ -27,6 +28,7 @@ public class PostarrDbContext : DbContext
         m.Entity<SeasonItem>().HasIndex(s => s.PlexRatingKey).IsUnique();
         m.Entity<PlexCollection>().HasIndex(c => c.PlexRatingKey).IsUnique();
         m.Entity<SettingsRecord>().HasKey(s => s.Id);
+        m.Entity<ArtworkHistoryEntry>().ToTable("ArtworkHistory").HasIndex(h => new { h.LibraryItemId, h.SeasonId, h.Kind });
     }
 }
 

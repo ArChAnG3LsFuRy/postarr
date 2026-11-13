@@ -36,6 +36,20 @@ public class PostersController : ControllerBase
         return Ok(list);
     }
 
+    // Previously applied choices for the picker's "Your previous posters" row (newest first, current one included).
+    [HttpGet("history/item/{id}")]
+    public async Task<ActionResult> ItemHistory(int id, [FromQuery] string kind = "poster") =>
+        Ok(await _applyService.GetHistoryAsync(id, null, kind == "background" ? "background" : "poster"));
+
+    [HttpGet("history/season/{seasonId}")]
+    public async Task<ActionResult> SeasonHistory(int seasonId)
+    {
+        using var db = await _dbFactory.CreateDbContextAsync();
+        var season = await db.Seasons.FindAsync(seasonId);
+        if (season == null) return NotFound();
+        return Ok(await _applyService.GetHistoryAsync(season.LibraryItemId, season.Id, "poster"));
+    }
+
     [HttpGet("candidates/season/{seasonId}")]
     public async Task<ActionResult> GetSeasonCandidates(int seasonId)
     {

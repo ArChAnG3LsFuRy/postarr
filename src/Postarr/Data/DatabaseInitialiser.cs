@@ -116,6 +116,20 @@ public static class DatabaseInitialiser
                 "LastSyncedUtc"      TEXT    NOT NULL DEFAULT '0001-01-01 00:00:00'
             );
             """);
+        await ExecAsync(conn, """
+            CREATE TABLE IF NOT EXISTS "ArtworkHistory" (
+                "Id"            INTEGER NOT NULL CONSTRAINT "PK_ArtworkHistory" PRIMARY KEY AUTOINCREMENT,
+                "LibraryItemId" INTEGER NOT NULL DEFAULT 0,
+                "SeasonId"      INTEGER NULL,
+                "Kind"          TEXT    NOT NULL DEFAULT 'poster',
+                "ImageUrl"      TEXT    NOT NULL DEFAULT '',
+                "Source"        TEXT    NULL,
+                "AppliedUtc"    TEXT    NOT NULL DEFAULT '0001-01-01 00:00:00'
+            );
+            """);
+        await ExecAsync(conn, """CREATE INDEX IF NOT EXISTS "IX_ArtworkHistory_LibraryItemId_SeasonId_Kind" ON "ArtworkHistory" ("LibraryItemId", "SeasonId", "Kind");""");
+        // History of titles/seasons that have since been removed from Postarr.
+        await ExecAsync(conn, """DELETE FROM "ArtworkHistory" WHERE "LibraryItemId" NOT IN (SELECT "Id" FROM "LibraryItems") OR ("SeasonId" IS NOT NULL AND "SeasonId" NOT IN (SELECT "Id" FROM "Seasons"));""");
         await EnsureColumnAsync(conn, "ManagedCollections", "AutoPosterUrl", "TEXT", null);
         await EnsureColumnAsync(conn, "ManagedCollections", "OrderHash",     "TEXT", null);
 

@@ -454,6 +454,22 @@ public class AutoCollectionSetConfig
 /// A collection Postarr created on the media server for an auto-collection set. Postarr only ever changes or
 /// deletes collections listed here — never ones the user made.
 /// </summary>
+/// <summary>
+/// One artwork choice that was applied to the media server: a movie's or show's poster or background, or a season
+/// poster. Kept so a replaced choice can be picked again from the picker ("Your previous posters"): the newest few per
+/// poster, oldest dropped.
+/// </summary>
+public class ArtworkHistoryEntry
+{
+    public int      Id            { get; set; }
+    public int      LibraryItemId { get; set; }
+    public int?     SeasonId      { get; set; }               // set for a season poster
+    public string   Kind          { get; set; } = "poster";   // "poster" | "background"
+    public string   ImageUrl      { get; set; } = string.Empty;
+    public string?  Source        { get; set; }
+    public DateTime AppliedUtc    { get; set; }
+}
+
 public class ManagedCollection
 {
     public int       Id                   { get; set; }

@@ -82,6 +82,7 @@ public class PosterApplyService
         using var db = await _dbFactory.CreateDbContextAsync(ct);
         var item = await db.LibraryItems.FindAsync(new object[] { libraryItemId }, ct)
             ?? throw new InvalidOperationException("Item not found.");
+        var (prevUrl, prevSource, prevWhen, prevApplied) = (item.CurrentPosterUrl, item.CurrentPosterSource, item.LastPosterAppliedUtc, item.PosterAppliedToPlex);
 
         // A Plex-sourced poster is already in Plex (e.g. the user's own upload) — just select it,
         // as-is: no download, no overlay badges, and Plex keeps its other posters.
@@ -99,6 +100,8 @@ public class PosterApplyService
         item.PosterDismissed     = false;   // picking a poster un-dismisses it
         item.LastPosterAppliedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await RecordHistoryAsync(db, item.Id, null, "poster", prevApplied ? prevUrl : null, prevSource, prevWhen,
+                                 item.CurrentPosterUrl, item.CurrentPosterSource, ct);
 
         await _log.LogAsync($"Poster applied to {_clientFactory.MediaServerName}: {item.Title} ({source})");
         await _notifier.PosterAppliedAsync(item.Title, source.ToString(), queued: false);
@@ -151,11 +154,16 @@ public class PosterApplyService
         // Season posters only get overlays when the season-overlay scope is enabled.
         // When off, push the artwork clean (still backed up first inside PushPosterAsync).
         var applyOverlays = _settings.Get().Overlays.SeasonPosterOverlaysEnabled;
-        if (parent != null) await PushPosterAsync(parent, imageUrl, ct, season.PlexRatingKey, bytes: bytes, applyOverlays: applyOverlays);
+        var (prevUrl, prevSource, prevWhen) = (season.CurrentPosterUrl, season.CurrentPosterSource, season.LastPosterAppliedUtc);
+        // An image the server already has (an earlier upload, picked again from the history) is selected, not re-uploaded.
+        if (source == PosterSource.Plex && imageUrl != null && bytes == null) await SelectPlexPosterAsync(season.PlexRatingKey, imageUrl, ct);
+        else if (parent != null) await PushPosterAsync(parent, imageUrl, ct, season.PlexRatingKey, bytes: bytes, applyOverlays: applyOverlays);
         season.CurrentPosterUrl    = imageUrl ?? await ResolveUploadedArtUrlAsync(season.PlexRatingKey, false, ct) ?? "custom";
         season.CurrentPosterSource = source.ToString();
         season.LastPosterAppliedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await RecordHistoryAsync(db, season.LibraryItemId, season.Id, "poster", prevWhen.HasValue ? prevUrl : null, prevSource, prevWhen,
+                                 season.CurrentPosterUrl, season.CurrentPosterSource, ct);
 
         await _log.LogAsync($"Season poster applied: {title}");
         return "applied";
@@ -247,6 +255,42 @@ public class PosterApplyService
         return "applied";
     }
 
+    // ── History of applied artwork ────────────────────────────────────────────
+    public const int HistoryKeep = 12;
+
+    // Records an applied choice. The first time a poster gets a history, the choice it replaces (if it had been applied)
+    // is recorded first, so the very first change can already be undone. Re-applying the same image adds nothing.
+    private async Task RecordHistoryAsync(PostarrDbContext db, int itemId, int? seasonId, string kind,
+        string? prevUrl, string? prevSource, DateTime? prevWhen, string? newUrl, string? newSource, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(newUrl) || newUrl == "custom") return;
+        try
+        {
+            var rows = await db.ArtworkHistory
+                .Where(h => h.LibraryItemId == itemId && h.SeasonId == seasonId && h.Kind == kind)
+                .OrderByDescending(h => h.AppliedUtc).ThenByDescending(h => h.Id).ToListAsync(ct);
+            if (rows.Count == 0 && !string.IsNullOrEmpty(prevUrl) && prevUrl != "custom" && prevUrl != newUrl)
+                db.ArtworkHistory.Add(new ArtworkHistoryEntry { LibraryItemId = itemId, SeasonId = seasonId, Kind = kind,
+                    ImageUrl = prevUrl, Source = prevSource, AppliedUtc = prevWhen ?? DateTime.UtcNow.AddSeconds(-1) });
+            if (rows.FirstOrDefault()?.ImageUrl == newUrl) { await db.SaveChangesAsync(ct); return; }
+            // Picking an earlier one again moves it to the top rather than listing it twice.
+            db.ArtworkHistory.RemoveRange(rows.Where(r => r.ImageUrl == newUrl));
+            db.ArtworkHistory.Add(new ArtworkHistoryEntry { LibraryItemId = itemId, SeasonId = seasonId, Kind = kind,
+                ImageUrl = newUrl, Source = newSource, AppliedUtc = DateTime.UtcNow });
+            db.ArtworkHistory.RemoveRange(rows.Where(r => r.ImageUrl != newUrl).Skip(HistoryKeep - 1));
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { /* history is a convenience; never fail an apply over it */ }
+    }
+
+    public async Task<List<ArtworkHistoryEntry>> GetHistoryAsync(int itemId, int? seasonId, string kind, CancellationToken ct = default)
+    {
+        using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.ArtworkHistory.AsNoTracking()
+            .Where(h => h.LibraryItemId == itemId && h.SeasonId == seasonId && h.Kind == kind)
+            .OrderByDescending(h => h.AppliedUtc).ThenByDescending(h => h.Id).Take(HistoryKeep).ToListAsync(ct);
+    }
+
     // ── Dismiss (clears proposed poster without applying) ─────────────────────
 
     public async Task DismissPosterAsync(int libraryItemId, CancellationToken ct = default)
@@ -283,6 +327,7 @@ public class PosterApplyService
             ?? throw new InvalidOperationException("Item not found.");
 
         var plex    = _clientFactory.BuildMediaServerClient() ?? throw new InvalidOperationException($"{_clientFactory.MediaServerName} not configured.");
+        var (prevUrl, prevSource, prevWhen, prevApplied) = (item.CurrentBackgroundUrl, item.CurrentBackgroundSource, item.LastBackgroundAppliedUtc, item.BackgroundAppliedToPlex);
 
         // A Plex-sourced background already lives in Plex — just select it, no download/re-upload.
         if (source == PosterSource.Plex)
@@ -304,6 +349,8 @@ public class PosterApplyService
         item.BackgroundDismissed      = false;   // picking a background un-dismisses it
         item.LastBackgroundAppliedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await RecordHistoryAsync(db, item.Id, null, "background", prevApplied ? prevUrl : null, prevSource, prevWhen,
+                                 item.CurrentBackgroundUrl, item.CurrentBackgroundSource, ct);
 
         await _log.LogAsync($"Background applied: {item.Title} ({source})");
         await _notifier.BackgroundAppliedAsync(item.Title, source.ToString(), queued: false);

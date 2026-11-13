@@ -315,6 +315,10 @@ html, body { margin:0; padding:0; background:var(--bg-base); color:var(--text-pr
 .candidate-card img { width:100%; height:100%; object-fit:cover; display:block; }
 .candidate-card:hover { border-color:var(--accent); }
 .candidate-tag { position:absolute; bottom:6px; left:6px; font-size:9px; font-weight:700; text-transform:uppercase; padding:2px 5px; border-radius:3px; background:rgba(14,16,21,0.85); color:var(--text-secondary); }
+.picker-section { grid-column:1/-1; font-size:12.5px; font-weight:700; color:var(--text-primary); margin:4px 0 -4px; }
+.picker-section span { font-weight:400; color:var(--text-tertiary); margin-left:6px; }
+.history-card.is-current { cursor:default; border-color:var(--accent); }
+.history-card.is-current .candidate-tag { background:var(--accent); color:var(--accent-text); }
 .candidate-src { position:absolute; bottom:6px; right:6px; width:22px; height:22px; display:flex; align-items:center; justify-content:center;
   border-radius:4px; background:rgba(14,16,21,0.85); color:var(--text-secondary); font-size:13px; font-weight:700; text-decoration:none; opacity:.75; }
 .candidate-src:hover { opacity:1; color:var(--accent-text); background:var(--accent); }

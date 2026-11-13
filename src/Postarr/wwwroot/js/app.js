@@ -1626,8 +1626,10 @@ function openSeasonPicker(item, season) {
     ? `/posters/candidates/item/${item.id}`
     : `/posters/candidates/season/${season.id}`;
 
-  api(path).then(candidates => {
+  const histPath = isShow ? `/posters/history/item/${item.id}` : `/posters/history/season/${season.id}`;
+  Promise.all([api(path), api(histPath).catch(() => [])]).then(([candidates, history]) => {
     S.modal.candidates = candidates ?? [];
+    S.modal.history    = history ?? [];
     renderCandidateGrid('poster');
   }).catch(e => {
     grid.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`;
@@ -1654,7 +1656,13 @@ async function loadCandidates(item, scope, kind, seasonId = null) {
       : kind === 'background'                  ? `/backgrounds/candidates/item/${item.id}`
       : scope === 'season' && seasonId         ? `/posters/candidates/season/${seasonId}`
       : `/posters/candidates/item/${item.id}`;
-    S.modal.candidates = await api(path) ?? [];
+    const histPath = kind === 'collection'     ? null
+      : kind === 'background'                  ? `/posters/history/item/${item.id}?kind=background`
+      : scope === 'season' && seasonId         ? null
+      : `/posters/history/item/${item.id}`;
+    const [candidates, history] = await Promise.all([api(path), histPath ? api(histPath).catch(() => []) : []]);
+    S.modal.candidates = candidates ?? [];
+    S.modal.history    = history ?? [];
     renderCandidateGrid(kind);
   } catch(e) { grid.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`; }
 }
@@ -1685,12 +1693,47 @@ function candidateSourcePage(c, kind) {
   return null;
 }
 
+// The artwork currently chosen for what the picker is open on (poster, background or season poster).
+function pickerCurrentUrl(kind) {
+  const it = S.modal?.item; if (!it) return null;
+  if (S.modal.pickerMode === 'season' && S.modal.seasonItemId)
+    return (it.seasons || []).find(x => x.id === S.modal.seasonItemId)?.currentPosterUrl ?? null;
+  return kind === 'background' ? it.currentBackgroundUrl : it.currentPosterUrl;
+}
+
+// "Your previous posters": artwork applied before, newest first. An image the server holds (an earlier upload,
+// or one picked from the server's own) is re-selected there; anything else is re-applied from its source.
+function historyCandidates(kind) {
+  const cur = pickerCurrentUrl(kind);
+  return (S.modal.history || []).map(h => ({
+    imageUrl: h.imageUrl,
+    thumbnailUrl: /^https?:/i.test(h.imageUrl) ? thumbUrl(h.imageUrl, 300) : h.imageUrl,
+    source: /^https?:/i.test(h.imageUrl) ? (SOURCE_MAP[h.source] ?? 0) : 3,
+    appliedUtc: h.appliedUtc,
+    isCurrent: h.imageUrl === cur,
+  }));
+}
+
 function renderCandidateGrid(kind) {
   const grid = el('#modal-grid');
   const textlessOnly = el('#modal-textless-only').checked && kind !== 'background';
   const candidates   = S.modal.candidates.filter(c => !textlessOnly || c.isTextless);
-  if (!candidates.length) { grid.innerHTML = '<div class="empty-state">No images found.</div>'; return; }
-  grid.innerHTML = candidates.map((c, i) => `
+  const history      = historyCandidates(kind);
+  const showHistory  = history.some(h => !h.isCurrent);   // nothing to go back to with only the current one
+  const what = kind === 'background' ? 'backgrounds' : 'posters';
+  const historyHtml = !showHistory ? '' : `
+    <div class="picker-section">Your previous ${what} <span>newest first — click one to use it again</span></div>
+    ${history.map((h, i) => `
+    <div class="candidate-card history-card ${kind === 'background' ? 'bg-mode' : ''}${h.isCurrent ? ' is-current' : ''}" data-hidx="${i}"
+         title="${h.isCurrent ? 'In use now' : `Used ${esc(localTime(h.appliedUtc))} — click to use it again`}">
+      <div class="candidate-card-inner">
+        <img src="${esc(h.thumbnailUrl)}" loading="lazy" onerror="this.style.visibility='hidden'" />
+        <span class="candidate-tag">${h.isCurrent ? 'In use' : esc(new Date(h.appliedUtc).toLocaleDateString())}</span>
+      </div>
+    </div>`).join('')}
+    <div class="picker-section">All ${what}</div>`;
+  if (!candidates.length && !showHistory) { grid.innerHTML = '<div class="empty-state">No images found.</div>'; return; }
+  grid.innerHTML = historyHtml + candidates.map((c, i) => `
     <div class="candidate-card ${kind === 'background' ? 'bg-mode' : ''}" data-idx="${i}">
       <div class="candidate-card-inner">
         <img src="${esc(c.thumbnailUrl || c.imageUrl)}" loading="lazy" />
@@ -1703,6 +1746,11 @@ function renderCandidateGrid(kind) {
     `<div class="modal-drop-hint">📁 Drag & drop your own image here, or use the "Custom poster" button above</div>`;
   els('.candidate-card').forEach(card => card.addEventListener('click', e => {
     if (e.target.closest('.candidate-src')) return;   // the ↗ link opens the source page; it doesn't pick the poster
+    if (card.classList.contains('history-card')) {
+      const h = history[+card.dataset.hidx];
+      if (!h.isCurrent) applyCandidate({ imageUrl: h.imageUrl, source: h.source });
+      return;
+    }
     applyCandidate(candidates[+card.dataset.idx]);
   }));
 }
