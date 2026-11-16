@@ -1693,24 +1693,15 @@ function candidateSourcePage(c, kind) {
   return null;
 }
 
-// The artwork currently chosen for what the picker is open on (poster, background or season poster).
-function pickerCurrentUrl(kind) {
-  const it = S.modal?.item; if (!it) return null;
-  if (S.modal.pickerMode === 'season' && S.modal.seasonItemId)
-    return (it.seasons || []).find(x => x.id === S.modal.seasonItemId)?.currentPosterUrl ?? null;
-  return kind === 'background' ? it.currentBackgroundUrl : it.currentPosterUrl;
-}
-
 // "Your previous posters": artwork applied before, newest first. An image the server holds (an earlier upload,
 // or one picked from the server's own) is re-selected there; anything else is re-applied from its source.
 function historyCandidates(kind) {
-  const cur = pickerCurrentUrl(kind);
   return (S.modal.history || []).map(h => ({
     imageUrl: h.imageUrl,
     thumbnailUrl: /^https?:/i.test(h.imageUrl) ? thumbUrl(h.imageUrl, 300) : h.imageUrl,
     source: /^https?:/i.test(h.imageUrl) ? (SOURCE_MAP[h.source] ?? 0) : 3,
     appliedUtc: h.appliedUtc,
-    isCurrent: h.imageUrl === cur,
+    isCurrent: !!h.isCurrent,   // decided by the server from what's in use now
   }));
 }
 
@@ -1787,6 +1778,7 @@ async function applyCandidate(c) {
       S.shows = []; await renderShows({ keepScroll: true });
       const updated = S.shows.find(s => s.id === itemId);
       if (updated) {
+        S.modal.item = updated;   // keep the picker's copy current (it opens again from here)
         showModalLayer('detail');
         el('#modal-back-btn').hidden = true;
         el('#modal-title').textContent = updated.title;

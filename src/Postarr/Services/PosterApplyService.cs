@@ -283,12 +283,25 @@ public class PosterApplyService
         catch (Exception ex) when (ex is not OperationCanceledException) { /* history is a convenience; never fail an apply over it */ }
     }
 
-    public async Task<List<ArtworkHistoryEntry>> GetHistoryAsync(int itemId, int? seasonId, string kind, CancellationToken ct = default)
+    public record HistoryView(string ImageUrl, string? Source, DateTime AppliedUtc, bool IsCurrent);
+
+    // IsCurrent comes from what's in use right now (read fresh here), so the picker never marks a poster "In use"
+    // from an out-of-date copy of the title it opened with.
+    public async Task<List<HistoryView>> GetHistoryAsync(int itemId, int? seasonId, string kind, CancellationToken ct = default)
     {
         using var db = await _dbFactory.CreateDbContextAsync(ct);
-        return await db.ArtworkHistory.AsNoTracking()
+        string? current = null;
+        if (seasonId != null)
+            current = (await db.Seasons.AsNoTracking().FirstOrDefaultAsync(x => x.Id == seasonId, ct))?.CurrentPosterUrl;
+        else
+        {
+            var item = await db.LibraryItems.AsNoTracking().FirstOrDefaultAsync(x => x.Id == itemId, ct);
+            current = kind == "background" ? item?.CurrentBackgroundUrl : item?.CurrentPosterUrl;
+        }
+        var rows = await db.ArtworkHistory.AsNoTracking()
             .Where(h => h.LibraryItemId == itemId && h.SeasonId == seasonId && h.Kind == kind)
             .OrderByDescending(h => h.AppliedUtc).ThenByDescending(h => h.Id).Take(HistoryKeep).ToListAsync(ct);
+        return rows.Select(h => new HistoryView(h.ImageUrl, h.Source, h.AppliedUtc, h.ImageUrl == current)).ToList();
     }
 
     // ── Dismiss (clears proposed poster without applying) ─────────────────────
